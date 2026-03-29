@@ -15,6 +15,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fetcher import fetch_yfinance
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_fetch(ticker: str) -> dict:
+    return fetch_yfinance(ticker)
+
+
 # ─────────────────────────────────────────────
 # Page config
 # ─────────────────────────────────────────────
@@ -533,7 +538,7 @@ def render_results(result: dict):
             already = [p["ticker"] for p in st.session_state["peers"]]
             with st.spinner(f"Fetching {peer_input.strip()}…"):
                 try:
-                    pr = fetch_yfinance(peer_input.strip())
+                    pr = cached_fetch(peer_input.strip())
                     if pr["ticker"] == result["ticker"]:
                         st.warning("That's the same company you're already analysing.")
                     elif pr["ticker"] in already:
@@ -602,7 +607,7 @@ if analyze_btn:
     else:
         with st.spinner(f"Fetching financials for **{ticker_input.strip().upper()}**…"):
             try:
-                result = fetch_yfinance(ticker_input.strip())
+                result = cached_fetch(ticker_input.strip())
             except Exception as e:
                 st.error(f"Failed to fetch data: {e}")
                 st.stop()
