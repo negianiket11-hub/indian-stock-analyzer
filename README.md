@@ -1,5 +1,7 @@
 # Indian Stock Financial Analyzer
 
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://indian-stock-analyzer-lqbr9kdxmrgvzk33hv9ekf.streamlit.app)
+
 A Streamlit dashboard for instantly fetching and analyzing financials of any NSE/BSE listed company using live Yahoo Finance data.
 
 ## Features
