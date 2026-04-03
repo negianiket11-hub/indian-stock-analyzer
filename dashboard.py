@@ -13,11 +13,25 @@ import plotly.graph_objects as go
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fetcher import fetch_yfinance
+from pattern_analyzer import detect_all_patterns, build_pattern_chart, TIMEFRAME_MAP
+import yfinance as yf
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_fetch(ticker: str) -> dict:
     return fetch_yfinance(ticker)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cached_price_history(ticker: str, period: str) -> pd.DataFrame:
+    try:
+        df = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        wanted = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
+        return df[wanted].dropna()
+    except Exception:
+        return pd.DataFrame()
 
 
 # ─────────────────────────────────────────────
@@ -375,6 +389,96 @@ def _sector_filter(ratios: dict, sector: str) -> tuple:
     return filtered, notes, hidden_hc
 
 
+def _render_pattern_card(pat, is_best: bool = False):
+    signal_emoji = {"Bullish": "🟢", "Bearish": "🔴", "Neutral": "🟡"}.get(pat.signal, "🟡")
+    status_emoji = {"Forming": "⏳", "Breakout": "🚀", "Breakdown": "📉"}.get(pat.status, "⏳")
+    with st.expander(
+        f"{signal_emoji} **{pat.name}** — {pat.confidence:.0f}% confidence  ·  {status_emoji} {pat.status}",
+        expanded=is_best,
+    ):
+        st.write(pat.description)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Breakout Level", f"₹{pat.breakout_level:,.2f}" if pat.breakout_level else "—")
+        c2.metric("Price Target",   f"₹{pat.target_price:,.2f}"   if pat.target_price   else "—")
+        c3.metric("Stop Loss",      f"₹{pat.stop_loss:,.2f}"      if pat.stop_loss      else "—")
+
+
+def _render_pattern_tab(ticker: str, company: str):
+    st.subheader(f"Pattern Analysis — {company}")
+
+    col_tf, col_sens, col_btn = st.columns([2, 3, 1])
+    with col_tf:
+        timeframe = st.selectbox(
+            "Timeframe", list(TIMEFRAME_MAP.keys()), index=3, key="pat_tf",
+        )
+    with col_sens:
+        sensitivity = st.slider(
+            "Sensitivity (pivot order)", min_value=2, max_value=15, value=5,
+            key="pat_sens",
+            help="Lower = more patterns detected  |  Higher = only major pivots",
+        )
+    with col_btn:
+        run_btn = st.button("Detect", type="primary", use_container_width=True, key="pat_run")
+
+    cache_key = f"{ticker}_{timeframe}_{sensitivity}"
+    needs_run = run_btn or st.session_state.get("_pat_key") != cache_key
+
+    if needs_run:
+        period = TIMEFRAME_MAP[timeframe]
+        with st.spinner("Fetching price data and detecting patterns…"):
+            price_df = cached_price_history(ticker, period)
+
+        if price_df.empty:
+            st.error("Could not fetch price history for this ticker.")
+            return
+
+        min_needed = max(30, sensitivity * 6)
+        if len(price_df) < min_needed:
+            st.warning(
+                f"Only {len(price_df)} candles available — not enough for sensitivity={sensitivity}. "
+                "Try a longer timeframe or lower sensitivity."
+            )
+            return
+
+        patterns = detect_all_patterns(price_df, order=sensitivity)
+        st.session_state["_pat_key"]      = cache_key
+        st.session_state["_pat_patterns"] = patterns
+        st.session_state["_pat_df"]       = price_df
+    else:
+        patterns  = st.session_state.get("_pat_patterns", [])
+        price_df  = st.session_state.get("_pat_df", pd.DataFrame())
+
+    if price_df.empty:
+        st.info("Click **Detect** to start pattern analysis.")
+        return
+
+    # ── Best pattern banner ───────────────────────────────────────────────────
+    if patterns:
+        best = patterns[0]
+        color_map = {"Bullish": "🟢", "Bearish": "🔴", "Neutral": "🟡"}
+        st.success(
+            f"**Top Pattern: {best.name}** {color_map.get(best.signal, '🟡')}  ·  "
+            f"Signal: **{best.signal}**  ·  Confidence: **{best.confidence:.0f}%**  ·  "
+            f"Status: **{best.status}**"
+        )
+    else:
+        st.info(
+            "No significant patterns detected in this timeframe. "
+            "Try a longer timeframe or reduce sensitivity."
+        )
+
+    # ── Chart ─────────────────────────────────────────────────────────────────
+    fig = build_pattern_chart(price_df, patterns, ticker, timeframe)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Pattern cards ─────────────────────────────────────────────────────────
+    if patterns:
+        st.divider()
+        st.subheader(f"{len(patterns)} pattern{'s' if len(patterns) != 1 else ''} detected")
+        for i, pat in enumerate(patterns):
+            _render_pattern_card(pat, is_best=(i == 0))
+
+
 def render_results(result: dict):
     company = result["company"]
     info    = result.get("info", {})
@@ -408,7 +512,7 @@ def render_results(result: dict):
         st.session_state["peers"] = []
 
     # ── Tabs
-    tabs = st.tabs(["Financials", "Ratios", "Charts", "Trends", "Health Check", "Compare"])
+    tabs = st.tabs(["Financials", "Ratios", "Charts", "Trends", "Health Check", "Compare", "Patterns"])
 
     # Tab 0 — Financials
     with tabs[0]:
@@ -562,6 +666,10 @@ def render_results(result: dict):
                        "  |  ".join(f"**{p['company']}**" for p in peers))
             st.divider()
             compare_section(result, peers)
+
+    # Tab 6 — Patterns
+    with tabs[6]:
+        _render_pattern_tab(result["ticker"], company)
 
     # ── Download
     st.divider()
