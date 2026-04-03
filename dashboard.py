@@ -23,9 +23,9 @@ def cached_fetch(ticker: str) -> dict:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def cached_price_history(ticker: str, period: str) -> pd.DataFrame:
+def cached_price_history(ticker: str, period: str, interval: str) -> pd.DataFrame:
     try:
-        df = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
+        df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=True)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         wanted = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
@@ -404,6 +404,7 @@ def _render_pattern_card(pat, is_best: bool = False):
 
 
 def _render_pattern_tab(ticker: str, company: str):
+    from pattern_analyzer import PATTERN_TIMEFRAMES
     st.subheader(f"Pattern Analysis — {company}")
 
     col_tf, col_sens, col_btn = st.columns([2, 3, 1])
@@ -411,22 +412,31 @@ def _render_pattern_tab(ticker: str, company: str):
         timeframe = st.selectbox(
             "Timeframe", list(TIMEFRAME_MAP.keys()), index=3, key="pat_tf",
         )
+    tf_cfg = TIMEFRAME_MAP[timeframe]
+
     with col_sens:
         sensitivity = st.slider(
-            "Sensitivity (pivot order)", min_value=2, max_value=15, value=5,
+            "Sensitivity (pivot order)", min_value=2, max_value=15,
+            value=tf_cfg["default_order"],
             key="pat_sens",
-            help="Lower = more patterns detected  |  Higher = only major pivots",
+            help="Lower = more pivots detected  |  Higher = only major turning points",
         )
     with col_btn:
         run_btn = st.button("Detect", type="primary", use_container_width=True, key="pat_run")
+
+    # Show which patterns are applicable for this timeframe
+    valid_names = sorted(n for n, tfs in PATTERN_TIMEFRAMES.items() if timeframe in tfs)
+    st.caption(
+        f"**{timeframe}** ({tf_cfg['interval']} candles) — scanning for: "
+        + ", ".join(f"`{n}`" for n in valid_names)
+    )
 
     cache_key = f"{ticker}_{timeframe}_{sensitivity}"
     needs_run = run_btn or st.session_state.get("_pat_key") != cache_key
 
     if needs_run:
-        period = TIMEFRAME_MAP[timeframe]
         with st.spinner("Fetching price data and detecting patterns…"):
-            price_df = cached_price_history(ticker, period)
+            price_df = cached_price_history(ticker, tf_cfg["period"], tf_cfg["interval"])
 
         if price_df.empty:
             st.error("Could not fetch price history for this ticker.")
@@ -435,12 +445,12 @@ def _render_pattern_tab(ticker: str, company: str):
         min_needed = max(30, sensitivity * 6)
         if len(price_df) < min_needed:
             st.warning(
-                f"Only {len(price_df)} candles available — not enough for sensitivity={sensitivity}. "
-                "Try a longer timeframe or lower sensitivity."
+                f"Only {len(price_df)} candles available for sensitivity={sensitivity}. "
+                "Try a longer timeframe or lower the sensitivity slider."
             )
             return
 
-        patterns = detect_all_patterns(price_df, order=sensitivity)
+        patterns = detect_all_patterns(price_df, order=sensitivity, timeframe=timeframe)
         st.session_state["_pat_key"]      = cache_key
         st.session_state["_pat_patterns"] = patterns
         st.session_state["_pat_df"]       = price_df
@@ -464,7 +474,7 @@ def _render_pattern_tab(ticker: str, company: str):
     else:
         st.info(
             "No significant patterns detected in this timeframe. "
-            "Try a longer timeframe or reduce sensitivity."
+            "Try a different timeframe or reduce sensitivity."
         )
 
     # ── Chart ─────────────────────────────────────────────────────────────────

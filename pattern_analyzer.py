@@ -1,6 +1,6 @@
 """
 Stock Pattern Analyzer — Technical chart pattern detection and visualization.
-Detects 14 patterns across 7 families, scores by confidence, and builds
+Detects 22 patterns across 10 families, scores by confidence, and builds
 annotated candlestick charts.
 """
 
@@ -13,13 +13,49 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 # ── Timeframes ────────────────────────────────────────────────────────────────
-TIMEFRAME_MAP: dict[str, str] = {
-    "1 Month":  "1mo",
-    "3 Months": "3mo",
-    "6 Months": "6mo",
-    "1 Year":   "1y",
-    "2 Years":  "2y",
-    "5 Years":  "5y",
+# period: yfinance period string
+# interval: candle size (daily for ≤1Y, weekly for longer)
+# default_order: sensible pivot sensitivity for this timeframe
+TIMEFRAME_MAP: dict[str, dict] = {
+    "1 Month":  {"period": "1mo",  "interval": "1d",  "default_order": 3},
+    "3 Months": {"period": "3mo",  "interval": "1d",  "default_order": 4},
+    "6 Months": {"period": "6mo",  "interval": "1d",  "default_order": 5},
+    "1 Year":   {"period": "1y",   "interval": "1d",  "default_order": 7},
+    "2 Years":  {"period": "2y",   "interval": "1wk", "default_order": 5},
+    "5 Years":  {"period": "5y",   "interval": "1wk", "default_order": 6},
+}
+
+# ── Timeframe validity per pattern ────────────────────────────────────────────
+# Each pattern only makes technical sense on certain timeframes.
+# Flags need short bursts; Cup & Handle needs months of base-building.
+PATTERN_TIMEFRAMES: dict[str, set[str]] = {
+    # ── Short-term (days to weeks) ────────────────────────────────────────────
+    "Bull Flag":                {"1 Month", "3 Months", "6 Months"},
+    "Bear Flag":                {"1 Month", "3 Months", "6 Months"},
+    "Bull Pennant":             {"1 Month", "3 Months", "6 Months"},
+    "Bear Pennant":             {"1 Month", "3 Months", "6 Months"},
+    # ── Short to medium-term (weeks to months) ────────────────────────────────
+    "Ascending Triangle":       {"1 Month", "3 Months", "6 Months", "1 Year"},
+    "Descending Triangle":      {"1 Month", "3 Months", "6 Months", "1 Year"},
+    "Symmetrical Triangle":     {"1 Month", "3 Months", "6 Months", "1 Year"},
+    "Rising Wedge":             {"1 Month", "3 Months", "6 Months", "1 Year"},
+    "Falling Wedge":            {"1 Month", "3 Months", "6 Months", "1 Year"},
+    "Rectangle":                {"1 Month", "3 Months", "6 Months", "1 Year", "2 Years"},
+    # ── Medium-term (months) ─────────────────────────────────────────────────
+    "Double Top":               {"3 Months", "6 Months", "1 Year", "2 Years"},
+    "Double Bottom":            {"3 Months", "6 Months", "1 Year", "2 Years"},
+    "Broadening Formation":     {"3 Months", "6 Months", "1 Year", "2 Years"},
+    "Three Drives Up":          {"3 Months", "6 Months", "1 Year"},
+    "Three Drives Down":        {"3 Months", "6 Months", "1 Year"},
+    # ── Medium to long-term (months to years) ────────────────────────────────
+    "Head & Shoulders":         {"6 Months", "1 Year", "2 Years", "5 Years"},
+    "Inverse Head & Shoulders": {"6 Months", "1 Year", "2 Years", "5 Years"},
+    "Triple Top":               {"6 Months", "1 Year", "2 Years", "5 Years"},
+    "Triple Bottom":            {"6 Months", "1 Year", "2 Years", "5 Years"},
+    "Cup & Handle":             {"6 Months", "1 Year", "2 Years", "5 Years"},
+    # ── Long-term (years) ────────────────────────────────────────────────────
+    "Rounding Bottom":          {"1 Year", "2 Years", "5 Years"},
+    "Rounding Top":             {"1 Year", "2 Years", "5 Years"},
 }
 
 # ── Colors per pattern signal ─────────────────────────────────────────────────
@@ -780,21 +816,462 @@ def detect_cup_handle(df: pd.DataFrame) -> Optional[PatternResult]:
     )
 
 
+def detect_pennants(df: pd.DataFrame) -> list[PatternResult]:
+    """
+    Bull/Bear Pennant — like a flag but the consolidation is a small
+    symmetrical triangle (converging trendlines) instead of a rectangle.
+    """
+    results = []
+    c = df["Close"].values
+    h = df["High"].values
+    l = df["Low"].values
+    n = len(c)
+    if n < 20:
+        return results
+
+    x_end   = _iso(df.index[-1])
+    window  = min(50, n)
+    half    = window // 3
+    pole    = c[n - window: n - window + half]
+    consol  = c[n - window + half:]
+    ch      = h[n - window + half:]
+    cl      = l[n - window + half:]
+
+    if len(pole) < 4 or len(consol) < 6:
+        return results
+
+    pole_ret = float((pole[-1] - pole[0]) / pole[0] * 100)
+    xs       = np.arange(len(consol), dtype=float)
+    mh, _bh  = np.polyfit(xs, ch.astype(float), 1)
+    ml, _bl  = np.polyfit(xs, cl.astype(float), 1)
+
+    # Pennant: slopes converge (opposite signs or same sign but converging)
+    converging = (mh < 0 and ml > 0)
+
+    # Bull Pennant: sharp up-pole + converging consolidation
+    if pole_ret > 8 and converging:
+        bl     = float(ch.max())
+        target = float(c[-1] + (pole[-1] - pole[0]))
+        stop   = float(cl.min() * 0.99)
+        conf   = 65.0
+        if pole_ret > 15:           conf += 10
+        if float(c[-1]) > bl:       conf += 15
+        conf   = min(conf, 90.0)
+        status = "Breakout" if float(c[-1]) > bl else "Forming"
+        idx0   = n - window + half
+
+        results.append(PatternResult(
+            name="Bull Pennant", signal="Bullish",
+            confidence=conf, status=status,
+            description=(
+                f"Sharp rally of {pole_ret:.1f}% followed by a converging triangular consolidation. "
+                + ("Breakout above pennant — continuation expected." if status == "Breakout"
+                   else f"Awaiting breakout above ₹{bl:.0f} to target ₹{target:.0f}.")
+            ),
+            target_price=_f(target), stop_loss=_f(stop), breakout_level=_f(bl),
+            lines=[
+                _hline(_iso(df.index[idx0]), x_end, bl, _BULL_COLOR, dash="dot"),
+                _tline(_iso(df.index[idx0]), float(ch[0]), x_end, float(mh * (len(consol) - 1) + _bh), _BULL_COLOR),
+                _tline(_iso(df.index[idx0]), float(cl[0]), x_end, float(ml * (len(consol) - 1) + _bl), _BULL_COLOR),
+            ],
+            annotations=[_ann(x_end, bl, f" Pennant High ₹{bl:.0f}", _BULL_COLOR)],
+        ))
+
+    # Bear Pennant: sharp down-pole + converging consolidation
+    if pole_ret < -8 and converging:
+        bl     = float(cl.min())
+        target = float(c[-1] - abs(pole[-1] - pole[0]))
+        stop   = float(ch.max() * 1.01)
+        conf   = 65.0
+        if abs(pole_ret) > 15:      conf += 10
+        if float(c[-1]) < bl:       conf += 15
+        conf   = min(conf, 90.0)
+        status = "Breakdown" if float(c[-1]) < bl else "Forming"
+        idx0   = n - window + half
+
+        results.append(PatternResult(
+            name="Bear Pennant", signal="Bearish",
+            confidence=conf, status=status,
+            description=(
+                f"Sharp decline of {abs(pole_ret):.1f}% followed by a converging triangular consolidation. "
+                + ("Breakdown below pennant — continuation expected." if status == "Breakdown"
+                   else f"Awaiting breakdown below ₹{bl:.0f} to target ₹{target:.0f}.")
+            ),
+            target_price=_f(target), stop_loss=_f(stop), breakout_level=_f(bl),
+            lines=[
+                _hline(_iso(df.index[idx0]), x_end, bl, _BEAR_COLOR, dash="dot"),
+                _tline(_iso(df.index[idx0]), float(ch[0]), x_end, float(mh * (len(consol) - 1) + _bh), _BEAR_COLOR),
+                _tline(_iso(df.index[idx0]), float(cl[0]), x_end, float(ml * (len(consol) - 1) + _bl), _BEAR_COLOR),
+            ],
+            annotations=[_ann(x_end, bl, f" Pennant Low ₹{bl:.0f}", _BEAR_COLOR)],
+        ))
+
+    return results
+
+
+def detect_rectangle(
+    df: pd.DataFrame,
+    ph: np.ndarray,
+    pl: np.ndarray,
+) -> Optional[PatternResult]:
+    """
+    Rectangle (Trading Range) — price oscillates between flat support and flat
+    resistance. Neutral until breakout direction is known.
+    """
+    if len(ph) < 2 or len(pl) < 2:
+        return None
+
+    h = df["High"].values
+    l = df["Low"].values
+    c = df["Close"].values
+    x_end = _iso(df.index[-1])
+
+    resistance = float(np.mean(h[ph[-4:]]))  # average of last 4 pivot highs
+    support    = float(np.mean(l[pl[-4:]]))  # average of last 4 pivot lows
+    height     = resistance - support
+    if height <= 0:
+        return None
+
+    # Require oscillation: range must be meaningful (>3% of price)
+    if height / resistance * 100 < 3:
+        return None
+
+    # Check that recent highs are within 3% of resistance and recent lows within 3% of support
+    recent_highs = h[ph[-3:]]
+    recent_lows  = l[pl[-3:]]
+    if (np.any(np.abs(recent_highs - resistance) / resistance > 0.04) or
+            np.any(np.abs(recent_lows - support) / support > 0.04)):
+        return None
+
+    curr   = float(c[-1])
+    conf   = 62.0
+    if len(ph) >= 4 and len(pl) >= 4: conf += 12
+    conf   = min(conf, 82.0)
+
+    if curr > resistance:
+        signal = "Bullish"; status = "Breakout"
+        target = _f(resistance + height)
+        stop   = _f(support)
+        color  = _BULL_COLOR
+        label  = f" Breakout ₹{resistance:.0f}"
+    elif curr < support:
+        signal = "Bearish"; status = "Breakdown"
+        target = _f(support - height)
+        stop   = _f(resistance)
+        color  = _BEAR_COLOR
+        label  = f" Breakdown ₹{support:.0f}"
+    else:
+        signal = "Neutral"; status = "Forming"
+        target = None; stop = None; color = _NEUT_COLOR
+        label  = f" Range ₹{support:.0f}–₹{resistance:.0f}"
+
+    x0 = _iso(df.index[int(ph[-4]) if len(ph) >= 4 else 0])
+    return PatternResult(
+        name="Rectangle", signal=signal,
+        confidence=conf, status=status,
+        description=(
+            f"Price consolidating between support ₹{support:.0f} and resistance ₹{resistance:.0f} "
+            f"({height / resistance * 100:.1f}% range). "
+            + (f"Bullish breakout — target ₹{resistance + height:.0f}." if status == "Breakout"
+               else f"Bearish breakdown — target ₹{support - height:.0f}." if status == "Breakdown"
+               else f"Watch for breakout above ₹{resistance:.0f} or breakdown below ₹{support:.0f}.")
+        ),
+        target_price=target, stop_loss=stop, breakout_level=_f(resistance if signal != "Bearish" else support),
+        lines=[
+            _hline(x0, x_end, resistance, color),
+            _hline(x0, x_end, support,    color),
+        ],
+        annotations=[
+            _ann(x_end, resistance, f" Resistance ₹{resistance:.0f}", color),
+            _ann(x_end, support,    f" Support ₹{support:.0f}",       color),
+        ],
+    )
+
+
+def detect_broadening(
+    df: pd.DataFrame,
+    ph: np.ndarray,
+    pl: np.ndarray,
+) -> Optional[PatternResult]:
+    """
+    Broadening Formation (Megaphone) — expanding price swings with diverging
+    trendlines. Often signals distribution / increased volatility.
+    """
+    if len(ph) < 3 or len(pl) < 3:
+        return None
+
+    h = df["High"].values
+    l = df["Low"].values
+    c = df["Close"].values
+    n = len(df)
+    x_end = _iso(df.index[-1])
+
+    ph_u = ph[-4:]
+    pl_u = pl[-4:]
+    h_pts = h[ph_u].astype(float)
+    l_pts = l[pl_u].astype(float)
+
+    m_h, b_h = np.polyfit(ph_u.astype(float), h_pts, 1)
+    m_l, b_l = np.polyfit(pl_u.astype(float), l_pts, 1)
+
+    thresh = float(h_pts.mean()) * 0.0005
+
+    # Broadening: highs rising AND lows falling (diverging trendlines)
+    if not (m_h > thresh and m_l < -thresh):
+        return None
+
+    res_now = float(m_h * (n - 1) + b_h)
+    sup_now = float(m_l * (n - 1) + b_l)
+    curr    = float(c[-1])
+
+    conf = 58.0
+    if len(ph_u) >= 4 and len(pl_u) >= 4: conf += 12
+    conf = min(conf, 78.0)
+
+    x0h = _iso(df.index[int(ph_u[0])])
+    x0l = _iso(df.index[int(pl_u[0])])
+
+    return PatternResult(
+        name="Broadening Formation", signal="Bearish",
+        confidence=conf, status="Forming",
+        description=(
+            "Expanding price swings with rising highs and falling lows — megaphone pattern. "
+            "Signals market indecision and increasing volatility. Typically bearish at tops. "
+            f"Current upper boundary ₹{res_now:.0f}, lower ₹{sup_now:.0f}."
+        ),
+        target_price=_f(sup_now * 0.97), stop_loss=_f(res_now * 1.02), breakout_level=_f(sup_now),
+        lines=[
+            _tline(x0h, float(m_h * ph_u[0] + b_h), x_end, res_now, _BEAR_COLOR),
+            _tline(x0l, float(m_l * pl_u[0] + b_l), x_end, sup_now, _BEAR_COLOR),
+        ],
+        annotations=[
+            _ann(x_end, res_now, f" Upper ₹{res_now:.0f}", _BEAR_COLOR),
+            _ann(x_end, sup_now, f" Lower ₹{sup_now:.0f}", _BEAR_COLOR),
+        ],
+    )
+
+
+def detect_three_drives(
+    df: pd.DataFrame,
+    ph: np.ndarray,
+    pl: np.ndarray,
+) -> list[PatternResult]:
+    """
+    Three Drives — three equal, symmetrical pushes in the same direction,
+    each separated by a corrective pullback. Signals trend exhaustion.
+    """
+    results = []
+    h = df["High"].values
+    l = df["Low"].values
+    c = df["Close"].values
+    x_end = _iso(df.index[-1])
+
+    # Three Drives Up (bearish reversal) — three pivot highs ascending
+    if len(ph) >= 3:
+        for i in range(len(ph) - 2):
+            i1, i2, i3 = int(ph[i]), int(ph[i + 1]), int(ph[i + 2])
+            v1, v2, v3 = h[i1], h[i2], h[i3]
+            if not (v3 > v2 > v1):
+                continue
+            # Each drive should be roughly equal in size
+            d1 = v2 - v1
+            d2 = v3 - v2
+            if d1 <= 0 or d2 <= 0:
+                continue
+            if _pct(d1, d2) > 30:   # drives within 30% of each other
+                continue
+            # Need corrections between drives
+            corr1 = pl[(pl > i1) & (pl < i2)]
+            corr2 = pl[(pl > i2) & (pl < i3)]
+            if len(corr1) == 0 or len(corr2) == 0:
+                continue
+
+            avg_drive = float((d1 + d2) / 2)
+            curr      = float(c[-1])
+            stop      = float(v3 * 1.01)
+            target    = float(l[corr1[0]] if len(corr1) else v1)
+
+            conf = 60.0
+            if _pct(d1, d2) < 15: conf += 15
+            if curr < v3:          conf += 10
+            conf   = min(conf, 88.0)
+            status = "Breakdown" if curr < float(l[corr2[0]]) else "Forming"
+
+            results.append(PatternResult(
+                name="Three Drives Up", signal="Bearish",
+                confidence=conf, status=status,
+                description=(
+                    f"Three ascending drives to ₹{v1:.0f}, ₹{v2:.0f}, ₹{v3:.0f} — "
+                    f"each drive ~₹{avg_drive:.0f}. "
+                    "Equal measured moves signal buyer exhaustion. "
+                    + ("Reversal likely underway." if status == "Breakdown"
+                       else f"Reversal below ₹{float(l[corr2[0]]):.0f} confirms.")
+                ),
+                target_price=_f(target), stop_loss=_f(stop), breakout_level=_f(float(l[corr2[-1]])),
+                lines=[_hline(_iso(df.index[i1]), x_end, float(v3), _BEAR_COLOR, dash="dot")],
+                annotations=[_ann(x_end, float(v3), f" Drive 3 ₹{v3:.0f}", _BEAR_COLOR)],
+            ))
+
+    # Three Drives Down (bullish reversal) — three pivot lows descending
+    if len(pl) >= 3:
+        for i in range(len(pl) - 2):
+            i1, i2, i3 = int(pl[i]), int(pl[i + 1]), int(pl[i + 2])
+            v1, v2, v3 = l[i1], l[i2], l[i3]
+            if not (v3 < v2 < v1):
+                continue
+            d1 = v1 - v2
+            d2 = v2 - v3
+            if d1 <= 0 or d2 <= 0:
+                continue
+            if _pct(d1, d2) > 30:
+                continue
+            peaks1 = ph[(ph > i1) & (ph < i2)]
+            peaks2 = ph[(ph > i2) & (ph < i3)]
+            if len(peaks1) == 0 or len(peaks2) == 0:
+                continue
+
+            avg_drive = float((d1 + d2) / 2)
+            curr      = float(c[-1])
+            stop      = float(v3 * 0.99)
+            target    = float(h[peaks1[0]] if len(peaks1) else v1)
+
+            conf = 60.0
+            if _pct(d1, d2) < 15: conf += 15
+            if curr > v3:          conf += 10
+            conf   = min(conf, 88.0)
+            status = "Breakout" if curr > float(h[peaks2[0]]) else "Forming"
+
+            results.append(PatternResult(
+                name="Three Drives Down", signal="Bullish",
+                confidence=conf, status=status,
+                description=(
+                    f"Three descending drives to ₹{v1:.0f}, ₹{v2:.0f}, ₹{v3:.0f} — "
+                    f"each drive ~₹{avg_drive:.0f}. "
+                    "Equal measured moves signal seller exhaustion. "
+                    + ("Reversal likely underway." if status == "Breakout"
+                       else f"Reversal above ₹{float(h[peaks2[0]]):.0f} confirms.")
+                ),
+                target_price=_f(target), stop_loss=_f(stop), breakout_level=_f(float(h[peaks2[-1]])),
+                lines=[_hline(_iso(df.index[i1]), x_end, float(v3), _BULL_COLOR, dash="dot")],
+                annotations=[_ann(x_end, float(v3), f" Drive 3 ₹{v3:.0f}", _BULL_COLOR)],
+            ))
+
+    return results
+
+
+def detect_rounding(df: pd.DataFrame) -> list[PatternResult]:
+    """
+    Rounding Bottom (Saucer) and Rounding Top — slow, gradual curve reversal.
+    Works on longer timeframes where the pattern takes months to form.
+    """
+    results = []
+    c = df["Close"].values
+    n = len(c)
+    if n < 60:
+        return results
+
+    x_end = _iso(df.index[-1])
+
+    # Use last 80% of data to find the curve
+    seg_len = int(n * 0.8)
+    seg     = c[n - seg_len:]
+    xs      = np.linspace(0, 1, len(seg))
+
+    # Fit a quadratic (parabola): positive a = U-shape (bottom), negative a = ∩-shape (top)
+    try:
+        a, b, cc_coeff = np.polyfit(xs, seg, 2)
+    except (np.linalg.LinAlgError, ValueError):
+        return results
+
+    a = float(a)
+    if abs(a) < 0.001 * float(seg.mean()):   # curve not pronounced enough
+        return results
+
+    fitted  = np.polyval([a, b, cc_coeff], xs)
+    resid   = float(np.std(seg - fitted))
+    price_scale = float(seg.mean())
+    fit_quality = 1.0 - (resid / price_scale)   # 1 = perfect fit
+
+    if fit_quality < 0.90:   # require tight fit to parabola
+        return results
+
+    curr = float(c[-1])
+    rim  = float(max(seg[0], seg[-1]))   # the two ends of the curve
+
+    # ── Rounding Bottom ───────────────────────────────────────────────────────
+    if a > 0:
+        bottom  = float(min(seg))
+        depth   = float((rim - bottom) / rim * 100)
+        if depth < 5:
+            return results
+        target  = float(rim + (rim - bottom))
+        conf    = float(min(50 + fit_quality * 40, 88))
+        status  = "Breakout" if curr > rim else "Forming"
+
+        results.append(PatternResult(
+            name="Rounding Bottom", signal="Bullish",
+            confidence=conf, status=status,
+            description=(
+                f"Gradual U-shaped base over the past {seg_len} candles — "
+                f"depth {depth:.0f}% from rim ₹{rim:.0f}. "
+                "Slow accumulation pattern indicating a major trend reversal. "
+                + ("Breakout above rim confirmed." if status == "Breakout"
+                   else f"Watch for close above rim ₹{rim:.0f}.")
+            ),
+            target_price=_f(target), stop_loss=_f(bottom * 0.98), breakout_level=_f(rim),
+            lines=[_hline(_iso(df.index[n - seg_len]), x_end, rim, _BULL_COLOR)],
+            annotations=[_ann(x_end, rim, f" Rim ₹{rim:.0f}", _BULL_COLOR)],
+        ))
+
+    # ── Rounding Top ──────────────────────────────────────────────────────────
+    elif a < 0:
+        peak    = float(max(seg))
+        height  = float((peak - rim) / peak * 100)
+        if height < 5:
+            return results
+        target  = float(rim - (peak - rim))
+        conf    = float(min(50 + fit_quality * 40, 85))
+        status  = "Breakdown" if curr < rim else "Forming"
+
+        results.append(PatternResult(
+            name="Rounding Top", signal="Bearish",
+            confidence=conf, status=status,
+            description=(
+                f"Gradual ∩-shaped top over the past {seg_len} candles — "
+                f"height {height:.0f}% above rim ₹{rim:.0f}. "
+                "Slow distribution pattern indicating a major trend reversal. "
+                + ("Breakdown below rim confirmed." if status == "Breakdown"
+                   else f"Watch for close below rim ₹{rim:.0f}.")
+            ),
+            target_price=_f(target), stop_loss=_f(peak * 1.02), breakout_level=_f(rim),
+            lines=[_hline(_iso(df.index[n - seg_len]), x_end, rim, _BEAR_COLOR)],
+            annotations=[_ann(x_end, rim, f" Rim ₹{rim:.0f}", _BEAR_COLOR)],
+        ))
+
+    return results
+
+
 # ═══════════════════════════════════════════════════════════════
 #  MASTER DETECTOR
 # ═══════════════════════════════════════════════════════════════
 
-def detect_all_patterns(df: pd.DataFrame, order: int = 5) -> list[PatternResult]:
+def detect_all_patterns(
+    df: pd.DataFrame,
+    order: int = 5,
+    timeframe: str = "1 Year",
+) -> list[PatternResult]:
     """
-    Run all pattern detectors. Returns list sorted by confidence (highest first).
+    Run all pattern detectors valid for the given timeframe.
+    Patterns outside their natural timeframe are silently skipped.
+    Returns list sorted by confidence (highest first).
     """
     df = flatten_ohlcv(df)
     min_needed = max(30, order * 6)
     if len(df) < min_needed:
         return []
 
+    valid = PATTERN_TIMEFRAMES   # shorthand
     ph, pl = find_pivots(df["High"], df["Low"], order)
-
     all_results: list[PatternResult] = []
 
     if len(ph) >= 3:
@@ -806,10 +1283,22 @@ def detect_all_patterns(df: pd.DataFrame, order: int = 5) -> list[PatternResult]
     if len(ph) >= 3 and len(pl) >= 3:
         all_results.extend(detect_triangles(df, ph, pl))
         all_results.extend(detect_wedges(df, ph, pl))
+        all_results.extend(detect_three_drives(df, ph, pl))
+        rect = detect_rectangle(df, ph, pl)
+        if rect:
+            all_results.append(rect)
+        broad = detect_broadening(df, ph, pl)
+        if broad:
+            all_results.append(broad)
     all_results.extend(detect_flags(df))
+    all_results.extend(detect_pennants(df))
+    all_results.extend(detect_rounding(df))
     cup = detect_cup_handle(df)
     if cup:
         all_results.append(cup)
+
+    # Filter: keep only patterns valid for this timeframe
+    all_results = [p for p in all_results if timeframe in valid.get(p.name, set())]
 
     # Deduplicate: keep highest-confidence per pattern name
     best: dict[str, PatternResult] = {}
