@@ -77,6 +77,9 @@ class PatternResult:
     breakout_level: Optional[float]
     lines: list = field(default_factory=list)        # plotly add_shape kwargs
     annotations: list = field(default_factory=list)  # plotly add_annotation kwargs
+    # Pivot-point traces for the pattern shape drawn as scatter lines
+    # Each dict: {"x": [iso_date, ...], "y": [float, ...], "kind": "hist"|"level"}
+    traces: list = field(default_factory=list)
 
 
 # ── Low-level helpers ─────────────────────────────────────────────────────────
@@ -280,6 +283,9 @@ def detect_head_shoulders(
             ),
             target_price=target, stop_loss=_f(hd * 1.02), breakout_level=neckline,
             lines=lines, annotations=anns,
+            traces=[{"x": [_iso(df.index[ls_i]), _iso(df.index[lt_i]), _iso(df.index[hd_i]),
+                            _iso(df.index[rt_i]), _iso(df.index[rs_i])],
+                     "y": [float(h[ls_i]), float(nl1), float(hd), float(nl2), float(h[rs_i])]}],
         ))
 
     # ── Bullish Inverse Head & Shoulders ─────────────────────────────────────
@@ -333,6 +339,9 @@ def detect_head_shoulders(
                 _ann(x_end, neckline, f" Neckline ₹{neckline:.0f}", color),
                 _ann(x_end, target,   f" Target ₹{target:.0f}",     color, size=10),
             ],
+            traces=[{"x": [_iso(df.index[ls_i]), _iso(df.index[lp_i]), _iso(df.index[hd_i]),
+                            _iso(df.index[rp_i]), _iso(df.index[rs_i])],
+                     "y": [float(ls), float(nl1), float(hd), float(nl2), float(rs)]}],
         ))
 
     return results
@@ -388,6 +397,8 @@ def detect_double_top_bottom(
                 _ann(x_end, neck,   f" Neckline ₹{neck:.0f}",   color),
                 _ann(x_end, target, f" Target ₹{target:.0f}",   color, size=10),
             ],
+            traces=[{"x": [_iso(df.index[p1_i]), _iso(df.index[t_i]), _iso(df.index[p2_i])],
+                     "y": [float(p1), float(neck), float(p2)]}],
         ))
 
     # ── Double Bottom ─────────────────────────────────────────────────────────
@@ -429,6 +440,8 @@ def detect_double_top_bottom(
                 _ann(x_end, neck,   f" Neckline ₹{neck:.0f}",   color),
                 _ann(x_end, target, f" Target ₹{target:.0f}",   color, size=10),
             ],
+            traces=[{"x": [_iso(df.index[p1_i]), _iso(df.index[pk_i]), _iso(df.index[p2_i])],
+                     "y": [float(p1), float(neck), float(p2)]}],
         ))
 
     return results
@@ -457,7 +470,8 @@ def detect_triple_top_bottom(
             t2_arr = pl[(pl > i2) & (pl < i3)]
             if len(t1_arr) == 0 or len(t2_arr) == 0:
                 continue
-            neck = float(min(l[t1_arr[0]], l[t2_arr[0]]))
+            t1_i = int(t1_arr[0]); t2_i = int(t2_arr[0])
+            neck = float(min(l[t1_i], l[t2_i]))
             avg_top = float((v1 + v2 + v3) / 3)
             target  = float(neck - (avg_top - neck))
             curr    = float(c[-1])
@@ -480,6 +494,9 @@ def detect_triple_top_bottom(
                 target_price=target, stop_loss=_f(avg_top * 1.02), breakout_level=neck,
                 lines=[_hline(_iso(df.index[i1]), x_end, neck, _BEAR_COLOR)],
                 annotations=[_ann(x_end, neck, f" Neckline ₹{neck:.0f}", _BEAR_COLOR)],
+                traces=[{"x": [_iso(df.index[i1]), _iso(df.index[t1_i]), _iso(df.index[i2]),
+                                _iso(df.index[t2_i]), _iso(df.index[i3])],
+                         "y": [float(v1), float(l[t1_i]), float(v2), float(l[t2_i]), float(v3)]}],
             ))
 
     # ── Triple Bottom ─────────────────────────────────────────────────────────
@@ -493,7 +510,8 @@ def detect_triple_top_bottom(
             p2_arr = ph[(ph > i2) & (ph < i3)]
             if len(p1_arr) == 0 or len(p2_arr) == 0:
                 continue
-            neck    = float(max(h[p1_arr[0]], h[p2_arr[0]]))
+            p1_i = int(p1_arr[0]); p2_i = int(p2_arr[0])
+            neck    = float(max(h[p1_i], h[p2_i]))
             avg_bot = float((v1 + v2 + v3) / 3)
             target  = float(neck + (neck - avg_bot))
             curr    = float(c[-1])
@@ -516,6 +534,9 @@ def detect_triple_top_bottom(
                 target_price=target, stop_loss=_f(avg_bot * 0.98), breakout_level=neck,
                 lines=[_hline(_iso(df.index[i1]), x_end, neck, _BULL_COLOR)],
                 annotations=[_ann(x_end, neck, f" Neckline ₹{neck:.0f}", _BULL_COLOR)],
+                traces=[{"x": [_iso(df.index[i1]), _iso(df.index[p1_i]), _iso(df.index[i2]),
+                                _iso(df.index[p2_i]), _iso(df.index[i3])],
+                         "y": [float(v1), float(h[p1_i]), float(v2), float(h[p2_i]), float(v3)]}],
             ))
 
     return results
@@ -585,6 +606,10 @@ def detect_triangles(
                 _tline(x0t, y0t, x1t, y1t, color),
             ],
             annotations=[_ann(x_end, resistance, f" Resistance ₹{resistance:.0f}", color)],
+            traces=[
+                {"x": [_iso(df.index[i]) for i in ph_u], "y": [float(h[i]) for i in ph_u]},
+                {"x": [_iso(df.index[i]) for i in pl_u], "y": [float(l[i]) for i in pl_u]},
+            ],
         ))
 
     # Descending Triangle: flat support (slope ≈ 0), falling resistance
@@ -615,6 +640,10 @@ def detect_triangles(
                 _tline(x0t, y0t, x1t, y1t, color),
             ],
             annotations=[_ann(x_end, support, f" Support ₹{support:.0f}", color)],
+            traces=[
+                {"x": [_iso(df.index[i]) for i in ph_u], "y": [float(h[i]) for i in ph_u]},
+                {"x": [_iso(df.index[i]) for i in pl_u], "y": [float(l[i]) for i in pl_u]},
+            ],
         ))
 
     # Symmetrical Triangle: falling highs + rising lows, converging
@@ -642,6 +671,10 @@ def detect_triangles(
                 _tline(x0l, y0l, x1l, y1l, _NEUT_COLOR),
             ],
             annotations=[_ann(x_end, mid, f" Apex ₹{mid:.0f}", _NEUT_COLOR)],
+            traces=[
+                {"x": [_iso(df.index[i]) for i in ph_u], "y": [float(h[i]) for i in ph_u]},
+                {"x": [_iso(df.index[i]) for i in pl_u], "y": [float(l[i]) for i in pl_u]},
+            ],
         ))
 
     return results
@@ -699,6 +732,10 @@ def detect_wedges(
             lines=[_tline(*tl(ph_u, m_h, b_h), _BEAR_COLOR),
                    _tline(*tl(pl_u, m_l, b_l), _BEAR_COLOR)],
             annotations=[_ann(x_end, sup_now, f" Support ₹{sup_now:.0f}", _BEAR_COLOR)],
+            traces=[
+                {"x": [_iso(df.index[i]) for i in ph_u], "y": [float(h[i]) for i in ph_u]},
+                {"x": [_iso(df.index[i]) for i in pl_u], "y": [float(l[i]) for i in pl_u]},
+            ],
         ))
 
     # Falling Wedge: both slopes negative, upper slope < lower slope (converging downward) — bullish
@@ -721,6 +758,10 @@ def detect_wedges(
             lines=[_tline(*tl(ph_u, m_h, b_h), _BULL_COLOR),
                    _tline(*tl(pl_u, m_l, b_l), _BULL_COLOR)],
             annotations=[_ann(x_end, res_now, f" Resistance ₹{res_now:.0f}", _BULL_COLOR)],
+            traces=[
+                {"x": [_iso(df.index[i]) for i in ph_u], "y": [float(h[i]) for i in ph_u]},
+                {"x": [_iso(df.index[i]) for i in pl_u], "y": [float(l[i]) for i in pl_u]},
+            ],
         ))
 
     return results
@@ -762,6 +803,8 @@ def detect_flags(
         conf   = min(conf, 92.0)
         status = "Breakout" if float(c[-1]) > bl else "Forming"
 
+        pole_start_i = n - window
+        pole_end_i   = n - window + half
         results.append(PatternResult(
             name="Bull Flag", signal="Bullish",
             confidence=conf, status=status,
@@ -773,6 +816,12 @@ def detect_flags(
             target_price=_f(target), stop_loss=_f(stop), breakout_level=_f(bl),
             lines=[_hline(_iso(df.index[n - window + half]), x_end, bl, _BULL_COLOR, dash="dot")],
             annotations=[_ann(x_end, bl, f" Flag High ₹{bl:.0f}", _BULL_COLOR)],
+            traces=[
+                {"x": [_iso(df.index[pole_start_i]), _iso(df.index[pole_end_i])],
+                 "y": [float(pole_seg[0]), float(pole_seg[-1])]},
+                {"x": [_iso(df.index[pole_end_i]), _iso(df.index[-1])],
+                 "y": [float(max(flag_seg)), float(c[-1])]},
+            ],
         ))
 
     # Bear Flag: sharp decline + slight bounce consolidation
@@ -789,6 +838,8 @@ def detect_flags(
         conf   = min(conf, 92.0)
         status = "Breakdown" if float(c[-1]) < bl else "Forming"
 
+        pole_start_i = n - window
+        pole_end_i   = n - window + half
         results.append(PatternResult(
             name="Bear Flag", signal="Bearish",
             confidence=conf, status=status,
@@ -800,6 +851,12 @@ def detect_flags(
             target_price=_f(target), stop_loss=_f(stop), breakout_level=_f(bl),
             lines=[_hline(_iso(df.index[n - window + half]), x_end, bl, _BEAR_COLOR, dash="dot")],
             annotations=[_ann(x_end, bl, f" Flag Low ₹{bl:.0f}", _BEAR_COLOR)],
+            traces=[
+                {"x": [_iso(df.index[pole_start_i]), _iso(df.index[pole_end_i])],
+                 "y": [float(pole_seg[0]), float(pole_seg[-1])]},
+                {"x": [_iso(df.index[pole_end_i]), _iso(df.index[-1])],
+                 "y": [float(min(flag_seg)), float(c[-1])]},
+            ],
         ))
 
     return results
@@ -850,6 +907,9 @@ def detect_cup_handle(df: pd.DataFrame) -> Optional[PatternResult]:
     conf   = min(conf, 92.0)
     status = "Breakout" if curr > rim else "Forming"
 
+    # Sample 10 evenly-spaced points from the cup segment to draw the U-shape
+    cup_sample = np.linspace(0, window - 1, 10, dtype=int)
+    cup_start_i = n - window
     return PatternResult(
         name="Cup & Handle", signal="Bullish",
         confidence=conf, status=status,
@@ -861,6 +921,8 @@ def detect_cup_handle(df: pd.DataFrame) -> Optional[PatternResult]:
         target_price=_f(target), stop_loss=_f(handle_lo * 0.99), breakout_level=_f(rim),
         lines=[_hline(_iso(df.index[n - window]), x_end, rim, _BULL_COLOR)],
         annotations=[_ann(x_end, rim, f" Cup Rim ₹{rim:.0f}", _BULL_COLOR)],
+        traces=[{"x": [_iso(df.index[cup_start_i + si]) for si in cup_sample],
+                 "y": [float(c[cup_start_i + si]) for si in cup_sample]}],
     )
 
 
@@ -923,6 +985,14 @@ def detect_pennants(df: pd.DataFrame) -> list[PatternResult]:
                 _tline(_iso(df.index[idx0]), float(cl[0]), x_end, float(ml * (len(consol) - 1) + _bl), _BULL_COLOR),
             ],
             annotations=[_ann(x_end, bl, f" Pennant High ₹{bl:.0f}", _BULL_COLOR)],
+            traces=[
+                {"x": [_iso(df.index[n - window]), _iso(df.index[idx0])],
+                 "y": [float(pole[0]), float(pole[-1])]},
+                {"x": [_iso(df.index[idx0]), x_end],
+                 "y": [float(ch[0]), float(mh * (len(consol) - 1) + _bh)]},
+                {"x": [_iso(df.index[idx0]), x_end],
+                 "y": [float(cl[0]), float(ml * (len(consol) - 1) + _bl)]},
+            ],
         ))
 
     # Bear Pennant: sharp down-pole + converging consolidation
@@ -952,6 +1022,14 @@ def detect_pennants(df: pd.DataFrame) -> list[PatternResult]:
                 _tline(_iso(df.index[idx0]), float(cl[0]), x_end, float(ml * (len(consol) - 1) + _bl), _BEAR_COLOR),
             ],
             annotations=[_ann(x_end, bl, f" Pennant Low ₹{bl:.0f}", _BEAR_COLOR)],
+            traces=[
+                {"x": [_iso(df.index[n - window]), _iso(df.index[idx0])],
+                 "y": [float(pole[0]), float(pole[-1])]},
+                {"x": [_iso(df.index[idx0]), x_end],
+                 "y": [float(ch[0]), float(mh * (len(consol) - 1) + _bh)]},
+                {"x": [_iso(df.index[idx0]), x_end],
+                 "y": [float(cl[0]), float(ml * (len(consol) - 1) + _bl)]},
+            ],
         ))
 
     return results
@@ -1033,6 +1111,10 @@ def detect_rectangle(
             _ann(x_end, resistance, f" Resistance ₹{resistance:.0f}", color),
             _ann(x_end, support,    f" Support ₹{support:.0f}",       color),
         ],
+        traces=[
+            {"x": [_iso(df.index[i]) for i in ph[-4:]], "y": [float(h[i]) for i in ph[-4:]]},
+            {"x": [_iso(df.index[i]) for i in pl[-4:]], "y": [float(l[i]) for i in pl[-4:]]},
+        ],
     )
 
 
@@ -1096,6 +1178,10 @@ def detect_broadening(
             _ann(x_end, res_now, f" Upper ₹{res_now:.0f}", _BEAR_COLOR),
             _ann(x_end, sup_now, f" Lower ₹{sup_now:.0f}", _BEAR_COLOR),
         ],
+        traces=[
+            {"x": [_iso(df.index[i]) for i in ph_u], "y": [float(h[i]) for i in ph_u]},
+            {"x": [_iso(df.index[i]) for i in pl_u], "y": [float(l[i]) for i in pl_u]},
+        ],
     )
 
 
@@ -1134,16 +1220,17 @@ def detect_three_drives(
             if len(corr1) == 0 or len(corr2) == 0:
                 continue
 
+            c1_i = int(corr1[0]); c2_i = int(corr2[0])
             avg_drive = float((d1 + d2) / 2)
             curr      = float(c[-1])
             stop      = float(v3 * 1.01)
-            target    = float(l[corr1[0]] if len(corr1) else v1)
+            target    = float(l[c1_i])
 
             conf = 60.0
             if _pct(d1, d2) < 15: conf += 15
             if curr < v3:          conf += 10
             conf   = min(conf, 88.0)
-            status = "Breakdown" if curr < float(l[corr2[0]]) else "Forming"
+            status = "Breakdown" if curr < float(l[c2_i]) else "Forming"
 
             results.append(PatternResult(
                 name="Three Drives Up", signal="Bearish",
@@ -1153,11 +1240,14 @@ def detect_three_drives(
                     f"each drive ~₹{avg_drive:.0f}. "
                     "Equal measured moves signal buyer exhaustion. "
                     + ("Reversal likely underway." if status == "Breakdown"
-                       else f"Reversal below ₹{float(l[corr2[0]]):.0f} confirms.")
+                       else f"Reversal below ₹{float(l[c2_i]):.0f} confirms.")
                 ),
                 target_price=_f(target), stop_loss=_f(stop), breakout_level=_f(float(l[corr2[-1]])),
                 lines=[_hline(_iso(df.index[i1]), x_end, float(v3), _BEAR_COLOR, dash="dot")],
                 annotations=[_ann(x_end, float(v3), f" Drive 3 ₹{v3:.0f}", _BEAR_COLOR)],
+                traces=[{"x": [_iso(df.index[i1]), _iso(df.index[c1_i]), _iso(df.index[i2]),
+                                _iso(df.index[c2_i]), _iso(df.index[i3])],
+                         "y": [float(v1), float(l[c1_i]), float(v2), float(l[c2_i]), float(v3)]}],
             ))
 
     # Three Drives Down (bullish reversal) — three pivot lows descending
@@ -1178,16 +1268,17 @@ def detect_three_drives(
             if len(peaks1) == 0 or len(peaks2) == 0:
                 continue
 
+            p1_i = int(peaks1[0]); p2_i = int(peaks2[0])
             avg_drive = float((d1 + d2) / 2)
             curr      = float(c[-1])
             stop      = float(v3 * 0.99)
-            target    = float(h[peaks1[0]] if len(peaks1) else v1)
+            target    = float(h[p1_i])
 
             conf = 60.0
             if _pct(d1, d2) < 15: conf += 15
             if curr > v3:          conf += 10
             conf   = min(conf, 88.0)
-            status = "Breakout" if curr > float(h[peaks2[0]]) else "Forming"
+            status = "Breakout" if curr > float(h[p2_i]) else "Forming"
 
             results.append(PatternResult(
                 name="Three Drives Down", signal="Bullish",
@@ -1197,11 +1288,14 @@ def detect_three_drives(
                     f"each drive ~₹{avg_drive:.0f}. "
                     "Equal measured moves signal seller exhaustion. "
                     + ("Reversal likely underway." if status == "Breakout"
-                       else f"Reversal above ₹{float(h[peaks2[0]]):.0f} confirms.")
+                       else f"Reversal above ₹{float(h[p2_i]):.0f} confirms.")
                 ),
                 target_price=_f(target), stop_loss=_f(stop), breakout_level=_f(float(h[peaks2[-1]])),
                 lines=[_hline(_iso(df.index[i1]), x_end, float(v3), _BULL_COLOR, dash="dot")],
                 annotations=[_ann(x_end, float(v3), f" Drive 3 ₹{v3:.0f}", _BULL_COLOR)],
+                traces=[{"x": [_iso(df.index[i1]), _iso(df.index[p1_i]), _iso(df.index[i2]),
+                                _iso(df.index[p2_i]), _iso(df.index[i3])],
+                         "y": [float(v1), float(h[p1_i]), float(v2), float(h[p2_i]), float(v3)]}],
             ))
 
     return results
@@ -1256,6 +1350,7 @@ def detect_rounding(df: pd.DataFrame) -> list[PatternResult]:
         conf    = float(min(50 + fit_quality * 40, 88))
         status  = "Breakout" if curr > rim else "Forming"
 
+        rnd_sample = np.linspace(0, len(seg) - 1, 12, dtype=int)
         results.append(PatternResult(
             name="Rounding Bottom", signal="Bullish",
             confidence=conf, status=status,
@@ -1269,6 +1364,8 @@ def detect_rounding(df: pd.DataFrame) -> list[PatternResult]:
             target_price=_f(target), stop_loss=_f(bottom * 0.98), breakout_level=_f(rim),
             lines=[_hline(_iso(df.index[n - seg_len]), x_end, rim, _BULL_COLOR)],
             annotations=[_ann(x_end, rim, f" Rim ₹{rim:.0f}", _BULL_COLOR)],
+            traces=[{"x": [_iso(df.index[n - seg_len + si]) for si in rnd_sample],
+                     "y": [float(seg[si]) for si in rnd_sample]}],
         ))
 
     # ── Rounding Top ──────────────────────────────────────────────────────────
@@ -1281,6 +1378,7 @@ def detect_rounding(df: pd.DataFrame) -> list[PatternResult]:
         conf    = float(min(50 + fit_quality * 40, 85))
         status  = "Breakdown" if curr < rim else "Forming"
 
+        rnd_sample = np.linspace(0, len(seg) - 1, 12, dtype=int)
         results.append(PatternResult(
             name="Rounding Top", signal="Bearish",
             confidence=conf, status=status,
@@ -1294,6 +1392,8 @@ def detect_rounding(df: pd.DataFrame) -> list[PatternResult]:
             target_price=_f(target), stop_loss=_f(peak * 1.02), breakout_level=_f(rim),
             lines=[_hline(_iso(df.index[n - seg_len]), x_end, rim, _BEAR_COLOR)],
             annotations=[_ann(x_end, rim, f" Rim ₹{rim:.0f}", _BEAR_COLOR)],
+            traces=[{"x": [_iso(df.index[n - seg_len + si]) for si in rnd_sample],
+                     "y": [float(seg[si]) for si in rnd_sample]}],
         ))
 
     return results
@@ -1407,6 +1507,16 @@ def build_pattern_chart(
         whiskerwidth=0.5,
     ), row=1, col=1)
 
+    # ── Actual close price line (thin white, over candlesticks) ──────────────
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["Close"],
+        name="Close",
+        line=dict(color="rgba(255,255,255,0.50)", width=1.0),
+        opacity=0.75,
+        showlegend=False,
+        hovertemplate="Close: ₹%{y:,.0f}<extra></extra>",
+    ), row=1, col=1)
+
     # ── EMA 20 / 50 / 200 ────────────────────────────────────────────────────
     for span, color, name in [(20, "#F39C12", "EMA 20"),
                                (50, "#3498DB", "EMA 50"),
@@ -1495,7 +1605,20 @@ def build_pattern_chart(
         opacity  = PAT_OPACITY[rank]
         lw       = PAT_WIDTH[rank]
 
-        # ── 1. Historical pattern lines (solid, rank color) ───────────────────
+        # ── 1. Pattern shape as scatter line (solid, rank color) ─────────────
+        for tr in pat.traces:
+            fig.add_trace(go.Scatter(
+                x=tr["x"], y=tr["y"],
+                mode="lines+markers",
+                line=dict(color=h_color, width=lw + 0.5, dash="solid"),
+                marker=dict(color=h_color, size=5 if rank == 0 else 4,
+                            symbol="circle", opacity=opacity),
+                opacity=opacity,
+                showlegend=False,
+                hoverinfo="skip",
+            ), row=1, col=1)
+
+        # ── 2. Historical trendlines (solid, rank color) ──────────────────────
         for shape in pat.lines:
             hist = dict(shape)
             hist["line"] = {**shape["line"], "color": h_color,
@@ -1503,11 +1626,11 @@ def build_pattern_chart(
             hist["opacity"] = opacity
             fig.add_shape(**hist)
 
-            # ── 2. Projection of that same line (dashed cyan) ─────────────────
+            # ── 3. Projection of that same line (dashed cyan) ─────────────────
             proj = _project_from(shape, x_future, opacity=opacity * 0.85, width=lw * 0.8)
             fig.add_shape(**proj)
 
-        # ── 3. Annotations — best pattern only ───────────────────────────────
+        # ── 4. Annotations — best pattern only ───────────────────────────────
         if rank == 0:
             for ann in pat.annotations:
                 a = dict(ann)
@@ -1522,7 +1645,20 @@ def build_pattern_chart(
                     font=dict(color=h_color, size=11, family="monospace"),
                 )
 
-        # ── 4. Target projection (lime green, dotted) ─────────────────────────
+            # ── 5. Prediction scatter: current close → target (dashed cyan) ──
+            if pat.target_price:
+                fig.add_trace(go.Scatter(
+                    x=[x_last, x_future],
+                    y=[curr, pat.target_price],
+                    mode="lines",
+                    name="Prediction",
+                    line=dict(color=_PROJ_COLOR, width=2.2, dash="dash"),
+                    opacity=0.85,
+                    showlegend=False,
+                    hovertemplate="Prediction: ₹%{y:,.0f}<extra></extra>",
+                ), row=1, col=1)
+
+        # ── 6. Target projection (lime green, dotted) ─────────────────────────
         if pat.target_price and _is_new(pat.target_price):
             fig.add_shape(
                 type="line", xref="x", yref="y",
@@ -1539,7 +1675,7 @@ def build_pattern_chart(
                 font=dict(color=_TARGET_COLOR, size=10 if rank == 0 else 9),
             )
 
-        # ── 5. Stop loss projection (coral red, dash-dot) ─────────────────────
+        # ── 7. Stop loss projection (coral red, dash-dot) ─────────────────────
         if pat.stop_loss and _is_new(pat.stop_loss):
             fig.add_shape(
                 type="line", xref="x", yref="y",
@@ -1566,10 +1702,16 @@ def build_pattern_chart(
             showlegend=True,
         ), row=1, col=1)
 
-    # Color-key entries for the two projection types
+    # Color-key entries for chart overlays
     fig.add_trace(go.Scatter(
         x=[None], y=[None], mode="lines",
-        name="── Projection (cyan)",
+        name="── Close Price",
+        line=dict(color="rgba(255,255,255,0.50)", width=1.0),
+        showlegend=True,
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="lines",
+        name="── Prediction (cyan)",
         line=dict(color=_PROJ_COLOR, width=1.5, dash="dash"),
         showlegend=True,
     ), row=1, col=1)
