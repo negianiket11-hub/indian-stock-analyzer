@@ -16,6 +16,142 @@ from fetcher import fetch_yfinance
 from pattern_analyzer import detect_all_patterns, build_pattern_chart, TIMEFRAME_MAP
 import yfinance as yf
 
+# ── Per-pattern guidance: type, entry tip, what to watch, what to avoid ───────
+_GUIDANCE = {
+    "Head & Shoulders": {
+        "type": "Bearish Reversal", "reliability": "⭐⭐⭐⭐",
+        "entry": "Short on a confirmed daily close below the neckline, or on a retest of the neckline from below.",
+        "watch": "Volume should expand on the breakdown. Neckline retest (now resistance) is the ideal low-risk entry.",
+        "avoid": "Do not short into the right shoulder — the pattern is unconfirmed until the neckline breaks.",
+    },
+    "Inverse Head & Shoulders": {
+        "type": "Bullish Reversal", "reliability": "⭐⭐⭐⭐",
+        "entry": "Buy on a confirmed close above the neckline, or on a pullback to the neckline (now support).",
+        "watch": "Breakout volume should be higher than average. Right shoulder should be on lower volume than the head.",
+        "avoid": "Don't buy at the bottom of the head — waiting for neckline confirmation reduces false signals significantly.",
+    },
+    "Double Top": {
+        "type": "Bearish Reversal", "reliability": "⭐⭐⭐⭐",
+        "entry": "Short on a close below the valley (neckline) between the two peaks.",
+        "watch": "Second peak on lower volume than first is a strong confirmation of weakness.",
+        "avoid": "Avoid shorting between the two peaks — the pattern is only confirmed on neckline break.",
+    },
+    "Double Bottom": {
+        "type": "Bullish Reversal", "reliability": "⭐⭐⭐⭐",
+        "entry": "Buy on a close above the peak (neckline) between the two troughs.",
+        "watch": "Second bottom on lower volume and a quick bounce signals strong buyer interest.",
+        "avoid": "Don't buy at the second bottom — wait for the neckline break to confirm the reversal.",
+    },
+    "Triple Top": {
+        "type": "Bearish Reversal", "reliability": "⭐⭐⭐⭐⭐",
+        "entry": "Short below neckline on strong volume. Three failed breakout attempts = very strong resistance.",
+        "watch": "Each successive top on lower volume confirms waning buying pressure.",
+        "avoid": "False breakouts above the resistance are common before the final breakdown.",
+    },
+    "Triple Bottom": {
+        "type": "Bullish Reversal", "reliability": "⭐⭐⭐⭐⭐",
+        "entry": "Buy above neckline on strong volume. Three failed breakdowns = very strong support.",
+        "watch": "Third bottom bouncing quickly with rising volume signals accumulation.",
+        "avoid": "The pattern only completes above the neckline — premature entries at the third bottom carry high risk.",
+    },
+    "Ascending Triangle": {
+        "type": "Bullish Continuation", "reliability": "⭐⭐⭐⭐",
+        "entry": "Buy on a breakout above the flat resistance line with above-average volume.",
+        "watch": "Each higher low is a sign of increasing buying pressure. Breakout often explosive.",
+        "avoid": "Buying before the breakout risks being caught in multiple resistance rejections.",
+    },
+    "Descending Triangle": {
+        "type": "Bearish Continuation", "reliability": "⭐⭐⭐⭐",
+        "entry": "Short on a breakdown below the flat support line with above-average volume.",
+        "watch": "Each lower high shows sellers are increasingly aggressive.",
+        "avoid": "Support can hold for a long time — patience is required. False breakdowns are possible.",
+    },
+    "Symmetrical Triangle": {
+        "type": "Neutral Continuation", "reliability": "⭐⭐⭐",
+        "entry": "Wait for the breakout direction. Trade in the direction of the prior trend with a breakout close.",
+        "watch": "Volume contracts during formation and should expand sharply on breakout.",
+        "avoid": "Don't trade the breakout blindly — confirm with the prior trend direction and volume.",
+    },
+    "Rising Wedge": {
+        "type": "Bearish Reversal", "reliability": "⭐⭐⭐",
+        "entry": "Short on a close below the lower rising support line.",
+        "watch": "Price makes higher highs but each rally is on lower volume — bearish divergence.",
+        "avoid": "Rising wedges can extend longer than expected. Wait for the line break, not a prediction.",
+    },
+    "Falling Wedge": {
+        "type": "Bullish Reversal", "reliability": "⭐⭐⭐",
+        "entry": "Buy on a close above the upper falling resistance line.",
+        "watch": "Falling volume during the wedge followed by a volume spike on breakout is the ideal setup.",
+        "avoid": "Don't buy the lows inside the wedge — the pattern is only confirmed on breakout.",
+    },
+    "Bull Flag": {
+        "type": "Bullish Continuation", "reliability": "⭐⭐⭐⭐",
+        "entry": "Buy when price breaks above the upper boundary of the flag consolidation.",
+        "watch": "Low-volume consolidation followed by high-volume breakout is the textbook setup.",
+        "avoid": "The tighter and shorter the flag, the more powerful the breakout. Avoid wide, long flags.",
+    },
+    "Bear Flag": {
+        "type": "Bearish Continuation", "reliability": "⭐⭐⭐⭐",
+        "entry": "Short when price breaks below the lower boundary of the flag consolidation.",
+        "watch": "Low-volume bounce (flag) after a high-volume drop (pole) is the ideal setup.",
+        "avoid": "Counter-trend buying inside the flag is dangerous — the trend is down.",
+    },
+    "Bull Pennant": {
+        "type": "Bullish Continuation", "reliability": "⭐⭐⭐⭐",
+        "entry": "Buy on breakout above the upper converging trendline.",
+        "watch": "Shrinking volume during pennant formation then expansion on breakout confirms the pattern.",
+        "avoid": "Pennants resolve quickly — if the breakout doesn't happen within 1–3 weeks, the pattern may fail.",
+    },
+    "Bear Pennant": {
+        "type": "Bearish Continuation", "reliability": "⭐⭐⭐⭐",
+        "entry": "Short on breakdown below the lower converging trendline.",
+        "watch": "The sharper and quicker the flagpole drop, the more reliable the pennant continuation.",
+        "avoid": "A pennant that takes too long to form loses its energy — the breakdown may be weak.",
+    },
+    "Cup & Handle": {
+        "type": "Bullish Continuation", "reliability": "⭐⭐⭐⭐",
+        "entry": "Buy on a breakout above the cup rim (handle high) on strong volume.",
+        "watch": "Handle should not retrace more than 50% of the right side of the cup. Shallower = better.",
+        "avoid": "V-shaped cups (sharp bottoms) are less reliable than U-shaped ones (rounded bases).",
+    },
+    "Rectangle": {
+        "type": "Neutral / Breakout", "reliability": "⭐⭐⭐",
+        "entry": "Trade the breakout direction. Buy above resistance, short below support — both on volume.",
+        "watch": "The longer the rectangle, the more powerful the eventual breakout.",
+        "avoid": "Trading inside the range is possible but risky. Wait for a confirmed close outside the range.",
+    },
+    "Broadening Formation": {
+        "type": "Bearish / Volatility", "reliability": "⭐⭐⭐",
+        "entry": "Short near the upper boundary with a tight stop above it, or wait for lower support to break.",
+        "watch": "Expanding volatility and news-driven swings are common. Risk management is critical.",
+        "avoid": "This pattern is unpredictable — reduce position size significantly.",
+    },
+    "Three Drives Up": {
+        "type": "Bearish Reversal", "reliability": "⭐⭐⭐",
+        "entry": "Short after the third drive completes — look for a reversal candle at the third peak.",
+        "watch": "Each drive should be roughly equal in size. RSI divergence at the third peak strengthens the signal.",
+        "avoid": "The third drive can extend further than expected. Use a stop above the third peak.",
+    },
+    "Three Drives Down": {
+        "type": "Bullish Reversal", "reliability": "⭐⭐⭐",
+        "entry": "Buy after the third drive — look for a bullish reversal candle at the third trough.",
+        "watch": "RSI divergence (price makes new low, RSI does not) at the third trough is a powerful confirmation.",
+        "avoid": "Wait for the reversal candle — buying into a falling market too early is the common mistake.",
+    },
+    "Rounding Bottom": {
+        "type": "Bullish Reversal", "reliability": "⭐⭐⭐⭐",
+        "entry": "Buy on a confirmed breakout above the rim level, ideally on weekly timeframe.",
+        "watch": "This is a slow accumulation pattern — institutional buying. Look for increasing volume near the rim.",
+        "avoid": "Jumping in at the bottom of the saucer is very early. Let the rim breakout confirm the move.",
+    },
+    "Rounding Top": {
+        "type": "Bearish Reversal", "reliability": "⭐⭐⭐⭐",
+        "entry": "Short on a confirmed breakdown below the rim level.",
+        "watch": "Gradual volume decline during the rounding top followed by expansion on breakdown is key.",
+        "avoid": "This is a slow distribution pattern — don't be impatient. Wait for the rim to break.",
+    },
+}
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_fetch(ticker: str) -> dict:
@@ -389,18 +525,90 @@ def _sector_filter(ratios: dict, sector: str) -> tuple:
     return filtered, notes, hidden_hc
 
 
+def _rr(pat) -> float | None:
+    """Risk:Reward ratio for a pattern."""
+    if not (pat.target_price and pat.stop_loss and pat.breakout_level):
+        return None
+    entry = pat.breakout_level
+    if pat.signal == "Bullish":
+        reward = pat.target_price - entry
+        risk   = entry - pat.stop_loss
+    else:
+        reward = entry - pat.target_price
+        risk   = pat.stop_loss - entry
+    return round(reward / risk, 2) if risk > 0 else None
+
+
 def _render_pattern_card(pat, is_best: bool = False):
-    signal_emoji = {"Bullish": "🟢", "Bearish": "🔴", "Neutral": "🟡"}.get(pat.signal, "🟡")
+    sig_emoji    = {"Bullish": "🟢", "Bearish": "🔴", "Neutral": "🟡"}.get(pat.signal, "🟡")
     status_emoji = {"Forming": "⏳", "Breakout": "🚀", "Breakdown": "📉"}.get(pat.status, "⏳")
-    with st.expander(
-        f"{signal_emoji} **{pat.name}** — {pat.confidence:.0f}% confidence  ·  {status_emoji} {pat.status}",
-        expanded=is_best,
-    ):
+    g            = _GUIDANCE.get(pat.name, {})
+    rr           = _rr(pat)
+
+    header = (
+        f"{sig_emoji} **{pat.name}** &nbsp;·&nbsp; "
+        f"{pat.confidence:.0f}% confidence &nbsp;·&nbsp; "
+        f"{status_emoji} {pat.status}"
+    )
+    with st.expander(header, expanded=is_best):
+
+        # ── Row 1: type + reliability + signal + R:R ─────────────────────────
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Pattern Type",  g.get("type", pat.signal))
+        c2.metric("Reliability",   g.get("reliability", "—"))
+        c3.metric("Signal",        f"{sig_emoji} {pat.signal}")
+        c4.metric("Risk : Reward", f"1 : {rr:.1f}" if rr else "—",
+                  help="Reward ÷ Risk based on target and stop loss levels")
+
+        # ── Confidence bar ────────────────────────────────────────────────────
+        st.caption(f"Confidence: **{pat.confidence:.0f}%**")
+        st.progress(int(pat.confidence) / 100)
+
+        st.divider()
+
+        # ── Plain-English description ─────────────────────────────────────────
+        st.markdown("**What is happening:**")
         st.write(pat.description)
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Breakout Level", f"₹{pat.breakout_level:,.2f}" if pat.breakout_level else "—")
-        c2.metric("Price Target",   f"₹{pat.target_price:,.2f}"   if pat.target_price   else "—")
-        c3.metric("Stop Loss",      f"₹{pat.stop_loss:,.2f}"      if pat.stop_loss      else "—")
+
+        # ── Key price levels ──────────────────────────────────────────────────
+        st.markdown("**Key price levels:**")
+        l1, l2, l3 = st.columns(3)
+        l1.metric(
+            "Entry / Breakout Level",
+            f"₹{pat.breakout_level:,.2f}" if pat.breakout_level else "—",
+            help="The price that confirms the pattern. Only act after a close beyond this level.",
+        )
+        l2.metric(
+            "Price Target",
+            f"₹{pat.target_price:,.2f}" if pat.target_price else "—",
+            delta=f"+{pat.target_price - pat.breakout_level:,.0f}" if (
+                pat.target_price and pat.breakout_level and pat.signal == "Bullish") else (
+                f"{pat.target_price - pat.breakout_level:,.0f}" if (
+                pat.target_price and pat.breakout_level) else None),
+            help="Measured-move target based on the height of the pattern.",
+        )
+        l3.metric(
+            "Stop Loss",
+            f"₹{pat.stop_loss:,.2f}" if pat.stop_loss else "—",
+            delta=f"{pat.stop_loss - pat.breakout_level:,.0f}" if (
+                pat.stop_loss and pat.breakout_level) else None,
+            delta_color="inverse",
+            help="Exit price if the pattern fails. Place stop just beyond this level.",
+        )
+
+        # ── Actionable guidance ───────────────────────────────────────────────
+        if g:
+            st.divider()
+            st.markdown("**How to trade this pattern:**")
+            t1, t2 = st.columns(2)
+            with t1:
+                st.markdown("**✅ Entry:**")
+                st.caption(g.get("entry", "—"))
+                st.markdown("**👀 What to watch:**")
+                st.caption(g.get("watch", "—"))
+            with t2:
+                st.markdown("**⚠️ What to avoid:**")
+                st.caption(g.get("avoid", "—"))
 
 
 def _render_pattern_tab(ticker: str, company: str):
@@ -462,31 +670,101 @@ def _render_pattern_tab(ticker: str, company: str):
         st.info("Click **Detect** to start pattern analysis.")
         return
 
-    # ── Best pattern banner ───────────────────────────────────────────────────
-    if patterns:
-        best = patterns[0]
-        color_map = {"Bullish": "🟢", "Bearish": "🔴", "Neutral": "🟡"}
-        st.success(
-            f"**Top Pattern: {best.name}** {color_map.get(best.signal, '🟡')}  ·  "
-            f"Signal: **{best.signal}**  ·  Confidence: **{best.confidence:.0f}%**  ·  "
-            f"Status: **{best.status}**"
-        )
+    if not patterns:
+        st.info("No significant patterns detected. Try a different timeframe or reduce sensitivity.")
+        st.plotly_chart(build_pattern_chart(price_df, [], ticker, timeframe), use_container_width=True)
+        return
+
+    # ── Overall bias meter ────────────────────────────────────────────────────
+    bull_score = sum(p.confidence for p in patterns if p.signal == "Bullish")
+    bear_score = sum(p.confidence for p in patterns if p.signal == "Bearish")
+    neut_score = sum(p.confidence for p in patterns if p.signal == "Neutral")
+    total      = bull_score + bear_score + neut_score or 1
+
+    bull_pct = int(bull_score / total * 100)
+    bear_pct = int(bear_score / total * 100)
+    n_bull   = sum(1 for p in patterns if p.signal == "Bullish")
+    n_bear   = sum(1 for p in patterns if p.signal == "Bearish")
+    n_neut   = sum(1 for p in patterns if p.signal == "Neutral")
+
+    if bull_pct > bear_pct + 15:
+        bias_label = "🟢 BULLISH BIAS"
+        bias_fn    = st.success
+    elif bear_pct > bull_pct + 15:
+        bias_label = "🔴 BEARISH BIAS"
+        bias_fn    = st.error
     else:
-        st.info(
-            "No significant patterns detected in this timeframe. "
-            "Try a different timeframe or reduce sensitivity."
-        )
+        bias_label = "🟡 MIXED / NEUTRAL"
+        bias_fn    = st.warning
+
+    bias_fn(
+        f"**Overall Signal: {bias_label}** &nbsp;·&nbsp; "
+        f"🟢 {n_bull} bullish ({bull_pct}%)  &nbsp;|&nbsp;  "
+        f"🔴 {n_bear} bearish ({bear_pct}%)  &nbsp;|&nbsp;  "
+        f"🟡 {n_neut} neutral  &nbsp;·&nbsp;  "
+        f"Based on {len(patterns)} pattern{'s' if len(patterns) != 1 else ''} detected"
+    )
+
+    # ── Best pattern quick summary ────────────────────────────────────────────
+    best = patterns[0]
+    rr   = _rr(best)
+    sig_emoji = {"Bullish": "🟢", "Bearish": "🔴", "Neutral": "🟡"}.get(best.signal, "🟡")
+    st.info(
+        f"**Strongest Pattern: {best.name}** {sig_emoji} &nbsp;·&nbsp; "
+        f"Confidence **{best.confidence:.0f}%** &nbsp;·&nbsp; "
+        f"Status: **{best.status}** &nbsp;·&nbsp; "
+        + (f"R:R = **1:{rr:.1f}**" if rr else "")
+    )
 
     # ── Chart ─────────────────────────────────────────────────────────────────
     fig = build_pattern_chart(price_df, patterns, ticker, timeframe)
     st.plotly_chart(fig, use_container_width=True)
 
-    # ── Pattern cards ─────────────────────────────────────────────────────────
-    if patterns:
-        st.divider()
-        st.subheader(f"{len(patterns)} pattern{'s' if len(patterns) != 1 else ''} detected")
-        for i, pat in enumerate(patterns):
-            _render_pattern_card(pat, is_best=(i == 0))
+    # ── Chart legend / reading guide ──────────────────────────────────────────
+    with st.expander("📖 How to read this chart", expanded=False):
+        st.markdown("""
+| Element | Meaning |
+|---|---|
+| **Candlesticks** | Green = bullish candle (close > open) · Red = bearish candle |
+| **EMA 20** (orange) | Short-term trend — price above = bullish momentum |
+| **EMA 50** (blue) | Medium-term trend — most widely watched by institutions |
+| **EMA 200** (pink) | Long-term trend — price above = bull market, below = bear market |
+| **Solid pattern lines** | Historical trendlines, necklines, support/resistance |
+| **Shaded right zone** | Future projection area — lines extrapolated forward |
+| **🎯 dashed line** | Price target based on pattern height (measured move) |
+| **🛑 dash-dot line** | Stop loss level — exit if price closes beyond this |
+| **Gold lines** | Best (highest confidence) pattern |
+| **Blue / Purple / Teal lines** | Secondary detected patterns |
+""")
+
+    # ── Trading plan for best pattern ─────────────────────────────────────────
+    st.divider()
+    st.subheader(f"📋 Trading Plan — {best.name}")
+    g = _GUIDANCE.get(best.name, {})
+
+    tp1, tp2, tp3, tp4 = st.columns(4)
+    tp1.metric("Entry at",    f"₹{best.breakout_level:,.2f}" if best.breakout_level else "—",
+               help="Only enter after a confirmed candle close beyond this level")
+    tp2.metric("Target",      f"₹{best.target_price:,.2f}"   if best.target_price   else "—")
+    tp3.metric("Stop Loss",   f"₹{best.stop_loss:,.2f}"      if best.stop_loss      else "—")
+    tp4.metric("Risk:Reward", f"1 : {rr:.1f}"                if rr                  else "—")
+
+    if g:
+        ga, gb = st.columns(2)
+        with ga:
+            st.markdown("**✅ Entry trigger:**")
+            st.info(g.get("entry", "—"))
+        with gb:
+            st.markdown("**👀 What to watch:**")
+            st.info(g.get("watch", "—"))
+        st.markdown("**⚠️ Common mistake to avoid:**")
+        st.warning(g.get("avoid", "—"))
+
+    # ── All pattern cards ─────────────────────────────────────────────────────
+    st.divider()
+    st.subheader(f"All Detected Patterns ({len(patterns)})")
+    for i, pat in enumerate(patterns):
+        _render_pattern_card(pat, is_best=(i == 0))
 
 
 def render_results(result: dict):

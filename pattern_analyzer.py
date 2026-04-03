@@ -1446,6 +1446,21 @@ def build_pattern_chart(
         xanchor="left", font=dict(color="rgba(255,255,255,0.5)", size=10),
     )
 
+    # ── Entry zone shading for best pattern ──────────────────────────────────
+    if patterns and patterns[0].breakout_level:
+        best_bl    = patterns[0].breakout_level
+        zone_pct   = best_bl * 0.005          # ±0.5% buffer around breakout
+        zone_color = ("rgba(38,166,91,0.12)"  if patterns[0].signal == "Bullish"
+                      else "rgba(231,76,60,0.12)")
+        fig.add_hrect(
+            y0=best_bl - zone_pct, y1=best_bl + zone_pct,
+            fillcolor=zone_color, line_width=0,
+            annotation_text="Entry Zone",
+            annotation_position="right",
+            annotation_font=dict(size=9, color="rgba(255,255,255,0.5)"),
+            row=1, col=1,
+        )
+
     # ── Draw all patterns: trendlines + future extensions + target/stop ───────
     drawn_levels: set[float] = set()   # avoid duplicate hlines at same price
 
