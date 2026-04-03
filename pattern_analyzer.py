@@ -1468,28 +1468,34 @@ def build_pattern_chart(
     timeframe: str = "",
 ) -> go.Figure:
     """
-    Candlestick + volume + EMA chart.
+    Clean, readable candlestick + volume + EMA chart with pattern overlays.
 
-    Color scheme
-    ────────────
-    Historical pattern lines  → solid, per-rank palette (gold / blue / purple …)
-    Future projection lines   → dashed CYAN (#00E5FF) — universal projection color
-    Target price projection   → dotted LIME GREEN (#69FF47)
-    Stop loss projection      → dash-dot CORAL RED (#FF6B6B)
+    Readability rules
+    ─────────────────
+    • Pattern shape scatter  → rank 0 only (gold), rank 1 secondary (blue)
+    • Trendlines             → rank 0 + 1 with projection; ranks 2-3 lines only
+    • Annotations            → right-edge labels spread with minimum 1.5% gap
+    • Target / Stop          → deduplicated at 2% threshold, shown in future zone only
     """
     df    = flatten_ohlcv(df)
     close = df["Close"]
     n     = len(df)
 
     # ── Geometry ──────────────────────────────────────────────────────────────
-    n_future = min(60, max(10, n // 5))
+    n_future = min(50, max(10, n // 6))
     x_last   = _iso(df.index[-1])
     x_future = _future_date(df, n_future)
 
-    # ── Per-pattern historical line colors (rank 0 = best) ────────────────────
+    # Price range for spacing calculations
+    price_hi   = float(df["High"].max())
+    price_lo   = float(df["Low"].min())
+    price_rng  = price_hi - price_lo if price_hi > price_lo else 1.0
+    min_gap    = price_rng * 0.018   # minimum vertical gap between right-edge labels
+
+    # ── Per-pattern colors (rank 0 = best) ────────────────────────────────────
     PAT_COLORS  = ["#FFD700", "#3498DB", "#9B59B6", "#1ABC9C", "#E67E22", "#E91E63"]
-    PAT_OPACITY = [1.0,        0.80,      0.65,      0.55,      0.50,      0.45]
-    PAT_WIDTH   = [2.5,        1.8,       1.5,       1.4,       1.2,       1.2]
+    PAT_OPACITY = [1.0,        0.75,      0.55,      0.45,      0.40,      0.35]
+    PAT_WIDTH   = [2.2,        1.6,       1.3,       1.1,       1.0,       1.0]
 
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True,
@@ -1507,118 +1513,118 @@ def build_pattern_chart(
         whiskerwidth=0.5,
     ), row=1, col=1)
 
-    # ── Actual close price line (thin white, over candlesticks) ──────────────
+    # ── Close price line (thin white semi-transparent) ────────────────────────
     fig.add_trace(go.Scatter(
         x=df.index, y=df["Close"],
         name="Close",
-        line=dict(color="rgba(255,255,255,0.50)", width=1.0),
-        opacity=0.75,
+        line=dict(color="rgba(255,255,255,0.35)", width=0.9),
         showlegend=False,
         hovertemplate="Close: ₹%{y:,.0f}<extra></extra>",
     ), row=1, col=1)
 
     # ── EMA 20 / 50 / 200 ────────────────────────────────────────────────────
-    for span, color, name in [(20, "#F39C12", "EMA 20"),
-                               (50, "#3498DB", "EMA 50"),
-                               (200, "#E91E63", "EMA 200")]:
+    for span, color, ema_name in [(20, "#F39C12", "EMA 20"),
+                                   (50, "#3498DB", "EMA 50"),
+                                   (200, "#E91E63", "EMA 200")]:
         if n >= span:
             ema = close.ewm(span=span, adjust=False).mean()
             fig.add_trace(go.Scatter(
-                x=df.index, y=ema, name=name,
-                line=dict(color=color, width=1.1),
-                opacity=0.75, showlegend=True,
+                x=df.index, y=ema, name=ema_name,
+                line=dict(color=color, width=1.0),
+                opacity=0.65, showlegend=True,
+                hovertemplate=f"{ema_name}: ₹%{{y:,.0f}}<extra></extra>",
             ), row=1, col=1)
 
-    # ── Volume ────────────────────────────────────────────────────────────────
+    # ── Volume bars ───────────────────────────────────────────────────────────
     vol_colors = [
         _BULL_COLOR if float(c) >= float(o) else _BEAR_COLOR
         for c, o in zip(df["Close"], df["Open"])
     ]
     fig.add_trace(go.Bar(
         x=df.index, y=df["Volume"],
-        marker_color=vol_colors, opacity=0.55,
+        marker_color=vol_colors, opacity=0.45,
         name="Volume", showlegend=False,
     ), row=2, col=1)
 
-    # ── Shaded future zone ────────────────────────────────────────────────────
+    # ── Projection zone divider (subtle) ──────────────────────────────────────
     fig.add_vrect(
         x0=x_last, x1=x_future,
-        fillcolor="rgba(0,229,255,0.04)", line_width=0,
-        annotation_text="◀ HISTORY  |  PROJECTION ▶",
-        annotation_position="top left",
-        annotation_font=dict(color="rgba(0,229,255,0.40)", size=9),
+        fillcolor="rgba(0,229,255,0.03)", line_width=0,
         row=1, col=1,
     )
     fig.add_vline(
         x=x_last, line_dash="dot",
-        line_color="rgba(0,229,255,0.35)", line_width=1.2,
+        line_color="rgba(0,229,255,0.30)", line_width=1.0,
         row=1, col=1,
     )
+    # Projection label on the vline (not inside the future zone to avoid overlap)
+    fig.add_annotation(
+        x=x_last, y=price_hi,
+        text="Now →",
+        showarrow=False, xref="x", yref="y",
+        xanchor="right", yanchor="top",
+        font=dict(color="rgba(0,229,255,0.35)", size=8),
+    )
 
-    # ── Current price reference ───────────────────────────────────────────────
+    # ── Current price (CMP) — dotted line in future zone only ─────────────────
     curr = float(close.iloc[-1])
     fig.add_shape(
         type="line", xref="x", yref="y",
         x0=x_last, x1=x_future, y0=curr, y1=curr,
-        line=dict(color="rgba(255,255,255,0.25)", dash="dot", width=1),
-    )
-    fig.add_annotation(
-        x=x_future, y=curr,
-        text=f" CMP ₹{curr:,.0f}",
-        showarrow=False, xref="x", yref="y",
-        xanchor="left", font=dict(color="rgba(255,255,255,0.45)", size=10),
+        line=dict(color="rgba(255,255,255,0.20)", dash="dot", width=1),
     )
 
     # ── Entry zone shading (best pattern breakout level) ──────────────────────
     if patterns and patterns[0].breakout_level:
         bl  = patterns[0].breakout_level
-        buf = bl * 0.005
-        fc  = ("rgba(38,166,91,0.13)"  if patterns[0].signal == "Bullish"
-               else "rgba(231,76,60,0.13)")
+        buf = max(bl * 0.004, price_rng * 0.003)
+        fc  = ("rgba(38,166,91,0.10)"  if patterns[0].signal == "Bullish"
+               else "rgba(231,76,60,0.10)")
         fig.add_hrect(
             y0=bl - buf, y1=bl + buf,
             fillcolor=fc, line_width=0,
-            annotation_text="Entry Zone",
-            annotation_position="right",
-            annotation_font=dict(size=9, color="rgba(255,255,255,0.45)"),
             row=1, col=1,
         )
 
     # ─────────────────────────────────────────────────────────────────────────
-    # DRAW PATTERNS
-    # Historical lines  → solid,  per-rank color
-    # Projection lines  → dashed, cyan  (_PROJ_COLOR)
-    # Target projection → dotted, lime green  (_TARGET_COLOR)
-    # Stop projection   → dash-dot, coral red  (_STOP_COLOR)
+    # DRAW PATTERNS — collect all right-edge labels first, then spread them
     # ─────────────────────────────────────────────────────────────────────────
-    drawn: set[float] = set()
 
-    def _is_new(level: float) -> bool:
-        for e in drawn:
-            if abs(e - level) / max(abs(level), 1) < 0.003:
+    # Track drawn price levels (2% dedup threshold — much wider than before)
+    drawn_levels: set[float] = set()
+
+    def _is_new_level(level: float) -> bool:
+        threshold = max(abs(level), 1.0) * 0.02
+        for e in drawn_levels:
+            if abs(e - level) < threshold:
                 return False
-        drawn.add(level)
+        drawn_levels.add(level)
         return True
 
-    for rank, pat in enumerate(patterns[:6]):
-        h_color  = PAT_COLORS[rank % len(PAT_COLORS)]
-        opacity  = PAT_OPACITY[rank]
-        lw       = PAT_WIDTH[rank]
+    # Collect right-edge annotations: list of [y, text, color, size]
+    right_anns: list[list] = []
 
-        # ── 1. Pattern shape as scatter line (solid, rank color) ─────────────
-        for tr in pat.traces:
-            fig.add_trace(go.Scatter(
-                x=tr["x"], y=tr["y"],
-                mode="lines+markers",
-                line=dict(color=h_color, width=lw + 0.5, dash="solid"),
-                marker=dict(color=h_color, size=5 if rank == 0 else 4,
-                            symbol="circle", opacity=opacity),
-                opacity=opacity,
-                showlegend=False,
-                hoverinfo="skip",
-            ), row=1, col=1)
+    # ── Best pattern (rank 0): full treatment ─────────────────────────────────
+    for rank, pat in enumerate(patterns[:4]):
+        h_color = PAT_COLORS[rank]
+        opacity = PAT_OPACITY[rank]
+        lw      = PAT_WIDTH[rank]
 
-        # ── 2. Historical trendlines (solid, rank color) ──────────────────────
+        # Pattern shape scatter — only for top 2 patterns to keep chart clean
+        if rank < 2 and pat.traces:
+            for tr in pat.traces:
+                fig.add_trace(go.Scatter(
+                    x=tr["x"], y=tr["y"],
+                    mode="lines+markers",
+                    line=dict(color=h_color, width=lw + 0.3, dash="solid"),
+                    marker=dict(color=h_color, size=5 if rank == 0 else 3,
+                                symbol="circle", opacity=opacity * 0.9),
+                    opacity=opacity,
+                    showlegend=False,
+                    hoverinfo="skip",
+                ), row=1, col=1)
+
+        # Trendlines — all 4 ranks; only top 2 get projections
         for shape in pat.lines:
             hist = dict(shape)
             hist["line"] = {**shape["line"], "color": h_color,
@@ -1626,120 +1632,152 @@ def build_pattern_chart(
             hist["opacity"] = opacity
             fig.add_shape(**hist)
 
-            # ── 3. Projection of that same line (dashed cyan) ─────────────────
-            proj = _project_from(shape, x_future, opacity=opacity * 0.85, width=lw * 0.8)
-            fig.add_shape(**proj)
+            if rank < 2:   # only project top 2 patterns forward
+                proj = _project_from(shape, x_future,
+                                     opacity=opacity * 0.7, width=lw * 0.7)
+                fig.add_shape(**proj)
 
-        # ── 4. Annotations — best pattern only ───────────────────────────────
-        if rank == 0:
-            for ann in pat.annotations:
-                a = dict(ann)
-                a["font"] = {**ann.get("font", {}), "color": h_color}
-                fig.add_annotation(**a)
-            if pat.breakout_level:
-                fig.add_annotation(
-                    x=x_last, y=pat.breakout_level,
-                    text=f"◀ {pat.name}",
-                    showarrow=False, xref="x", yref="y",
-                    xanchor="right",
-                    font=dict(color=h_color, size=11, family="monospace"),
-                )
+        # Prediction scatter (close → target) — rank 0 only
+        if rank == 0 and pat.target_price:
+            fig.add_trace(go.Scatter(
+                x=[x_last, x_future],
+                y=[curr, pat.target_price],
+                mode="lines",
+                name="Prediction",
+                line=dict(color=_PROJ_COLOR, width=2.0, dash="dash"),
+                opacity=0.80,
+                showlegend=False,
+                hovertemplate="Prediction: ₹%{y:,.0f}<extra></extra>",
+            ), row=1, col=1)
 
-            # ── 5. Prediction scatter: current close → target (dashed cyan) ──
-            if pat.target_price:
-                fig.add_trace(go.Scatter(
-                    x=[x_last, x_future],
-                    y=[curr, pat.target_price],
-                    mode="lines",
-                    name="Prediction",
-                    line=dict(color=_PROJ_COLOR, width=2.2, dash="dash"),
-                    opacity=0.85,
-                    showlegend=False,
-                    hovertemplate="Prediction: ₹%{y:,.0f}<extra></extra>",
-                ), row=1, col=1)
-
-        # ── 6. Target projection (lime green, dotted) ─────────────────────────
-        if pat.target_price and _is_new(pat.target_price):
+        # Target line — in future zone
+        if pat.target_price and _is_new_level(pat.target_price):
             fig.add_shape(
                 type="line", xref="x", yref="y",
                 x0=x_last, x1=x_future,
                 y0=pat.target_price, y1=pat.target_price,
                 opacity=opacity,
                 line=dict(color=_TARGET_COLOR, dash="dot",
-                          width=2.0 if rank == 0 else 1.2),
+                          width=1.8 if rank == 0 else 1.0),
             )
-            fig.add_annotation(
-                x=x_future, y=pat.target_price,
-                text=f" 🎯 ₹{pat.target_price:,.0f}",
-                showarrow=False, xref="x", yref="y", xanchor="left",
-                font=dict(color=_TARGET_COLOR, size=10 if rank == 0 else 9),
-            )
+            right_anns.append([
+                pat.target_price,
+                f"🎯 ₹{pat.target_price:,.0f}",
+                _TARGET_COLOR,
+                10 if rank == 0 else 9,
+            ])
 
-        # ── 7. Stop loss projection (coral red, dash-dot) ─────────────────────
-        if pat.stop_loss and _is_new(pat.stop_loss):
+        # Stop loss line — in future zone
+        if pat.stop_loss and _is_new_level(pat.stop_loss):
             fig.add_shape(
                 type="line", xref="x", yref="y",
                 x0=x_last, x1=x_future,
                 y0=pat.stop_loss, y1=pat.stop_loss,
                 opacity=opacity * 0.85,
                 line=dict(color=_STOP_COLOR, dash="dashdot",
-                          width=1.8 if rank == 0 else 1.0),
+                          width=1.6 if rank == 0 else 0.9),
             )
-            fig.add_annotation(
-                x=x_future, y=pat.stop_loss,
-                text=f" 🛑 ₹{pat.stop_loss:,.0f}",
-                showarrow=False, xref="x", yref="y", xanchor="left",
-                font=dict(color=_STOP_COLOR, size=9),
-            )
+            right_anns.append([
+                pat.stop_loss,
+                f"🛑 ₹{pat.stop_loss:,.0f}",
+                _STOP_COLOR,
+                10 if rank == 0 else 9,
+            ])
 
-    # ── Legend: pattern entries + color key ───────────────────────────────────
+    # Add CMP label to the pool so it gets spread with the others
+    right_anns.append([curr, f"CMP ₹{curr:,.0f}", "rgba(255,255,255,0.55)", 9])
+
+    # ── Spread right-edge annotations to eliminate overlap ────────────────────
+    # Sort by y descending, then push overlapping labels apart
+    right_anns.sort(key=lambda a: a[0], reverse=True)
+    spread = [list(a) for a in right_anns]
+    for i in range(1, len(spread)):
+        gap = spread[i - 1][0] - spread[i][0]
+        if gap < min_gap:
+            spread[i][0] = spread[i - 1][0] - min_gap
+
+    for y_pos, text, color, size in spread:
+        fig.add_annotation(
+            x=x_future, y=y_pos,
+            text=f" {text}",
+            showarrow=False, xref="x", yref="y",
+            xanchor="left", yanchor="middle",
+            font=dict(color=color, size=size),
+            bgcolor="rgba(15,15,25,0.65)",
+            borderpad=2,
+        )
+
+    # ── Best pattern name label (inside chart, left of divider) ───────────────
+    if patterns:
+        best = patterns[0]
+        sig_sym = {"Bullish": "▲", "Bearish": "▼", "Neutral": "◆"}.get(best.signal, "◆")
+        label_y = best.breakout_level if best.breakout_level else curr
+        fig.add_annotation(
+            x=x_last, y=label_y,
+            text=f"{sig_sym} {best.name}",
+            showarrow=True,
+            arrowhead=2, arrowsize=0.8,
+            arrowcolor=PAT_COLORS[0],
+            ax=-60, ay=0,
+            xref="x", yref="y",
+            xanchor="right",
+            font=dict(color=PAT_COLORS[0], size=10, family="monospace"),
+            bgcolor="rgba(15,15,25,0.70)",
+            borderpad=3,
+        )
+
+    # ── Legend entries ────────────────────────────────────────────────────────
     for rank, pat in enumerate(patterns[:4]):
         sig = {"Bullish": "▲", "Bearish": "▼", "Neutral": "◆"}.get(pat.signal, "◆")
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="lines",
             name=f"{sig} {pat.name} ({pat.confidence:.0f}%)",
-            line=dict(color=PAT_COLORS[rank % len(PAT_COLORS)], width=2),
+            line=dict(color=PAT_COLORS[rank], width=2.0),
             showlegend=True,
         ), row=1, col=1)
 
-    # Color-key entries for chart overlays
     fig.add_trace(go.Scatter(
         x=[None], y=[None], mode="lines",
-        name="── Close Price",
-        line=dict(color="rgba(255,255,255,0.50)", width=1.0),
-        showlegend=True,
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=[None], y=[None], mode="lines",
-        name="── Prediction (cyan)",
+        name="── Prediction",
         line=dict(color=_PROJ_COLOR, width=1.5, dash="dash"),
         showlegend=True,
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=[None], y=[None], mode="lines",
-        name="🎯 Target  🛑 Stop",
+        name="🎯 Target / 🛑 Stop",
         line=dict(color=_TARGET_COLOR, width=1.5, dash="dot"),
         showlegend=True,
     ), row=1, col=1)
 
     title = f"Pattern Analysis — {ticker}  ({timeframe})" if ticker else "Pattern Analysis"
     fig.update_layout(
-        title=dict(text=title, font=dict(size=15)),
+        title=dict(text=title, font=dict(size=15, color="rgba(255,255,255,0.85)")),
         template="plotly_dark",
         xaxis_rangeslider_visible=False,
-        height=680,
-        margin=dict(l=20, r=170, t=55, b=20),
+        height=720,
+        margin=dict(l=10, r=185, t=55, b=10),
         legend=dict(
             orientation="v", x=1.01, y=1,
             xanchor="left", yanchor="top",
-            bgcolor="rgba(0,0,0,0.45)",
+            bgcolor="rgba(10,10,20,0.75)",
+            bordercolor="rgba(255,255,255,0.12)",
+            borderwidth=1,
             font=dict(size=10),
         ),
         hovermode="x unified",
+        hoverlabel=dict(bgcolor="rgba(10,10,20,0.85)", font_size=11),
     )
-    fig.update_yaxes(title_text="Price (₹)", row=1, col=1,
-                     showgrid=True, gridcolor="rgba(255,255,255,0.07)")
-    fig.update_yaxes(title_text="Volume",    row=2, col=1, showgrid=False)
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.06)")
+    fig.update_yaxes(
+        title_text="Price (₹)", row=1, col=1,
+        showgrid=True, gridcolor="rgba(255,255,255,0.06)",
+        tickformat=",.0f",
+        side="left",
+    )
+    fig.update_yaxes(title_text="Vol", row=2, col=1, showgrid=False,
+                     tickformat=".2s")
+    fig.update_xaxes(
+        showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+        rangeslider_visible=False,
+    )
 
     return fig

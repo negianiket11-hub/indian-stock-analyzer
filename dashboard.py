@@ -725,16 +725,20 @@ def _render_pattern_tab(ticker: str, company: str):
         st.markdown("""
 | Element | Meaning |
 |---|---|
-| **Candlesticks** | Green = bullish candle (close > open) · Red = bearish candle |
-| **EMA 20** (orange) | Short-term trend — price above = bullish momentum |
-| **EMA 50** (blue) | Medium-term trend — most widely watched by institutions |
-| **EMA 200** (pink) | Long-term trend — price above = bull market, below = bear market |
-| **Solid pattern lines** | Historical trendlines, necklines, support/resistance |
-| **Shaded right zone** | Future projection area — lines extrapolated forward |
-| **🎯 dashed line** | Price target based on pattern height (measured move) |
-| **🛑 dash-dot line** | Stop loss level — exit if price closes beyond this |
-| **Gold lines** | Best (highest confidence) pattern |
-| **Blue / Purple / Teal lines** | Secondary detected patterns |
+| **Candlesticks** | Green = close > open (bullish candle) · Red = close < open (bearish) |
+| **Thin white line** | Actual closing price — shows the trend path clearly |
+| **EMA 20** (orange) | Short-term momentum — price above = short-term bullish |
+| **EMA 50** (blue) | Medium-term trend — institutional benchmark |
+| **EMA 200** (pink) | Long-term trend — price above = bull market |
+| **Gold scatter + lines** | Best detected pattern shape — connects the key pivot points |
+| **Blue scatter + lines** | Second-best pattern shape |
+| **Solid trendlines** | Support/resistance/necklines for the top patterns |
+| **"Now →" divider** | Vertical dotted line separating history from projections |
+| **Dashed cyan line** | Price prediction — extrapolated from current close → target |
+| **🎯 dotted lime line** | Price target based on the pattern's measured-move height |
+| **🛑 dash-dot coral line** | Stop loss — close beyond this invalidates the pattern |
+| **Right-side labels** | All price levels (CMP, Target, Stop) spaced to avoid overlap |
+| **Arrow annotation** | Points to the breakout/entry level of the strongest pattern |
 """)
 
     # ── Trading plan for best pattern ─────────────────────────────────────────
