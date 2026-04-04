@@ -1,0 +1,1955 @@
+================================================================================
+  INDIAN STOCK FINANCIAL ANALYZER — COMPLETE PROJECT DEEP READ
+  Everything built, every technical concept, explained from scratch.
+================================================================================
+
+Written: April 2026
+Project repo: https://github.com/negianiket11-hub/indian-stock-analyzer
+Live app:     https://indian-stock-analyzer-lqbr9kdxmrgvzk33hv9ekf.streamlit.app
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — WHAT IS THIS PROJECT?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This project is a full-stack financial analysis tool for Indian listed stocks
+(NSE/BSE). You type any stock name or ticker — INFY, Reliance, Shakti Pumps,
+HDFCBANK — and it fetches live financial data from Yahoo Finance, computes 25+
+financial ratios, runs sector-aware interpretation, lets you compare with peer
+companies, and now detects 22 technical chart patterns on the stock price.
+
+It started as a PDF annual report parser (main.py) that could read a company's
+physical PDF and extract Balance Sheet, P&L, Cash Flow. Then it was extended to
+a Streamlit web dashboard with live Yahoo Finance data (no PDF needed). Then a
+full pattern analysis engine (22 patterns across 10 families) was added, with
+an interactive Plotly chart showing the detected pattern shapes, trendlines,
+prediction lines, target prices, and stop loss levels.
+
+The whole thing is deployed on Streamlit Cloud and the code lives on GitHub.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2 — THE FILES AND WHAT EACH ONE DOES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  main.py           — The original PDF annual report analyzer. Reads a local
+                      PDF file, finds the financial statement pages automatically,
+                      extracts numbers using coordinate-based parsing, computes
+                      ratios, and prints a full report to the terminal. This is
+                      a standalone script, not part of the web app.
+
+  fetcher.py        — The live data bridge between Yahoo Finance and the
+                      dashboard. Wraps yfinance, reshapes its data format into
+                      the same structure that main.py's ratio engine expects, so
+                      the exact same compute_ratios() function works for both
+                      PDF-extracted data and live Yahoo Finance data.
+
+  pattern_analyzer.py — The technical analysis engine. Detects 22 chart
+                      patterns in stock price data, scores each by confidence,
+                      builds an annotated Plotly candlestick chart with pattern
+                      shapes, trendlines, predictions, targets, and stop losses.
+
+  dashboard.py      — The Streamlit web app. The UI layer that ties everything
+                      together. Users type a ticker, this fetches the data,
+                      renders 7 tabs of financial analysis and pattern analysis,
+                      handles caching, session state, peer comparison, etc.
+
+  requirements.txt  — Lists all Python packages needed for Streamlit Cloud to
+                      install before running dashboard.py.
+
+  README.md         — Project description for GitHub with setup instructions.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 3 — TECH STACK: EVERY LIBRARY EXPLAINED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  STREAMLIT
+  ─────────
+  Streamlit is a Python library that turns a Python script into a web app
+  automatically. You write Python — it renders buttons, text, charts, tables,
+  sliders, tabs, in a browser. No HTML, no JavaScript, no web server setup.
+  Every time the user clicks a button or changes an input, Streamlit re-runs
+  the entire script from top to bottom. This is different from traditional web
+  frameworks — the simplicity is the point. The trade-off is that you have to
+  be careful about expensive operations (like fetching live data) being re-run
+  on every interaction, which is why caching is critical (explained later).
+
+  Key Streamlit things used:
+    st.title(), st.caption()         — text elements
+    st.text_input(), st.selectbox()  — input widgets
+    st.button()                      — triggers analysis
+    st.tabs()                        — the 7-tab layout
+    st.metric()                      — the number boxes with delta arrows
+    st.expander()                    — collapsible sections (pattern cards)
+    st.plotly_chart()                — embeds a Plotly figure
+    st.dataframe()                   — renders a pandas DataFrame as a table
+    st.progress()                    — the confidence bar (0–100%)
+    st.success/warning/error/info()  — colored message boxes
+    st.spinner()                     — loading indicator during fetches
+    st.session_state                 — persists data between reruns
+    st.download_button()             — the "Download as JSON" button
+    @st.cache_data                   — caching decorator (see Section 6)
+
+  YFINANCE
+  ────────
+  yfinance is an unofficial Python wrapper around Yahoo Finance's API. Yahoo
+  Finance exposes stock data for free — you just need to know the right ticker
+  format. For Indian stocks, NSE-listed companies use the ".NS" suffix (e.g.
+  INFY.NS, HDFCBANK.NS) and BSE-listed companies use ".BO" (e.g. 500209.BO).
+
+  Key yfinance objects:
+    yf.Ticker("INFY.NS")             — creates a Ticker object for that stock
+    ticker.financials                — annual Income Statement (DataFrame)
+    ticker.balance_sheet             — annual Balance Sheet (DataFrame)
+    ticker.cashflow                  — annual Cash Flow Statement (DataFrame)
+    ticker.info                      — dict of metadata: market cap, PE, sector,
+                                       52-week high/low, employee count, etc.
+    ticker.history(period, interval) — OHLCV price history (used for patterns)
+    yf.Search(query)                 — search Yahoo Finance for a company name
+                                       and get back matching ticker symbols
+
+  yfinance returns financial statement data as a DataFrame where:
+    - Each ROW is a line item (Revenue, Net Income, Total Assets...)
+    - Each COLUMN is a date (the fiscal year end date like 2024-03-31)
+    - Values are in absolute INR (not crores). We divide by 10,000,000 (1 crore)
+
+  The data comes as multi-level columns sometimes, which is why flatten_ohlcv()
+  exists in pattern_analyzer.py — it strips the extra column level that yfinance
+  adds when fetching OHLCV data for multiple tickers.
+
+  PANDAS
+  ──────
+  pandas is the core data manipulation library. Everything financial in this
+  project lives inside pandas DataFrames — tabular data with labelled rows and
+  columns. Key operations used:
+
+    pd.DataFrame()                   — create a table from a list of dicts
+    df.iterrows()                    — loop over rows of a DataFrame
+    df[df["col"].str.contains(kw)]  — filter rows where a column matches text
+    df.dropna()                      — remove rows with missing values
+    df.drop_duplicates()             — remove duplicate rows
+    df.to_dict(orient="records")     — convert DataFrame to list of dicts (JSON)
+    df.ewm(span=N).mean()            — exponentially weighted moving average
+                                       (used for EMA 20/50/200 on the chart)
+    pd.Timestamp()                   — convert any date-like thing to a timestamp
+    pd.to_numeric(errors="coerce")   — convert column to numbers, NaN on failure
+
+  NUMPY
+  ─────
+  numpy is the numerical computing library. It operates on arrays of numbers
+  much faster than Python lists. Used in this project for:
+
+    np.array()                       — creates a numerical array
+    np.polyfit(x, y, 1)             — fits a straight line (degree 1 polynomial)
+                                       to a set of points using least squares.
+                                       Returns [slope, intercept].
+                                       This is how trendlines are computed —
+                                       feed it the pivot point positions (x=index
+                                       number, y=price) and it gives the best-fit
+                                       line through those pivots.
+    np.polyval([m, b], x)           — evaluates m*x + b for a given x
+    np.linspace(0, n, k, dtype=int) — k evenly spaced integers from 0 to n
+                                       (used to sample points from long curves)
+    np.isnan(v)                      — checks if a value is Not A Number
+    np.arange()                      — creates an integer sequence array
+
+  PLOTLY
+  ──────
+  Plotly is the interactive charting library. Unlike matplotlib (which makes
+  static images), Plotly makes interactive charts that you can zoom, pan, hover
+  over for exact values, and toggle traces by clicking the legend.
+
+  This project uses Plotly's graph_objects API (go.*) for full control:
+
+    go.Candlestick(x, open, high, low, close) — the OHLC candlestick chart
+    go.Scatter(x, y, mode, line, marker)      — line/scatter plots used for:
+                                                  EMA lines
+                                                  Close price line
+                                                  Pattern shape traces
+                                                  Prediction line
+                                                  Dummy legend entries
+    go.Bar(x, y, marker_color)               — volume bars
+    go.Waterfall()                            — the P&L waterfall chart
+    go.Pie()                                  — debt maturity donut chart
+    make_subplots(rows=2, ...)               — splits chart into price + volume
+
+  Plotly figures have two types of annotations:
+    fig.add_shape()      — draws geometric shapes (lines, rectangles) using
+                           coordinate values on the chart axes
+    fig.add_annotation() — places a text label at a coordinate
+    fig.add_vrect()      — a vertical shaded rectangle (the projection zone)
+    fig.add_vline()      — a vertical line (the "Now" divider)
+    fig.add_hrect()      — a horizontal shaded band (entry zone)
+    fig.add_trace()      — adds a new data series to the chart
+
+  PDFPLUMBER
+  ──────────
+  pdfplumber is a Python library for extracting text and data from PDF files.
+  It gives you access to individual pages and, crucially, the exact x/y
+  coordinates of every word on the page. This is essential for parsing financial
+  statements because you cannot just read the text — you need to know WHICH
+  COLUMN a number belongs to. The numbers "1234.56" and "987.65" on the same
+  row might be FY2025 and FY2024 values, and you can only tell which is which
+  by comparing their x-position to the year column headers.
+
+  Key pdfplumber operations:
+    pdfplumber.open(path)            — opens the PDF
+    pdf.pages[i]                     — access a specific page (0-indexed)
+    page.extract_text()              — gets all text as a string (fast, rough)
+    page.extract_words()             — gets a list of word dicts, each with:
+                                         text, x0, x1, top, bottom
+                                       (x0/x1 = left/right edge of word,
+                                        top = distance from top of page)
+
+  RE (Regular Expressions)
+  ────────────────────────
+  Python's built-in regex module. Used extensively in main.py for:
+    - Detecting company names in PDF text ("To the Members of X Limited")
+    - Detecting year tokens (FY2025, FY25, Mar-25, 2024-25)
+    - Cleaning extracted number strings ("(1,234.56)" → -1234.56)
+    - Stripping legal noise words from company name search queries
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 4 — main.py: THE PDF ANNUAL REPORT ANALYZER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This was the first file built. You set PDF_PATH to any Indian company's annual
+report PDF and it auto-detects and extracts everything.
+
+STEP 1 — DETECT COMPANY NAME
+  detect_company_name(pdf) scans the first 300 pages for the phrase
+  "To the Members of [Company Name] Limited" — which every Indian auditor's
+  report must contain. This is reliable because:
+    - It appears in EVERY Indian annual report (Companies Act requirement)
+    - The auditor writes the exact legal name
+    - The regex anchors on the word "Limited" so it doesn't grab noise text
+  Fallback: scans for short standalone lines ending in "Limited" on the
+  cover pages (first 50 pages).
+
+STEP 2 — AUTO-DETECT PAGE NUMBERS (auto_detect_pages)
+  Indian annual reports contain these standard sections:
+    standalone_bs   = Standalone Balance Sheet
+    standalone_pl   = Standalone Statement of Profit & Loss
+    standalone_cf   = Standalone Statement of Cash Flows
+    consolidated_bs = Consolidated Balance Sheet
+    consolidated_pl = Consolidated Statement of Profit & Loss
+    consolidated_cf = Consolidated Statement of Cash Flows
+    mda             = Management Discussion & Analysis
+
+  The function scans every page's top 15 lines looking for exact matches of
+  known section headers (like "STANDALONE BALANCE SHEET" or "STATEMENT OF
+  PROFIT AND LOSS"). Once found, it records the page number.
+
+  To find where each section ENDS, it scans for "NOTES TO THE FINANCIAL
+  STATEMENTS" which always follows the statement tables in Indian filings.
+
+STEP 3 — COORDINATE-BASED TABLE PARSING (extract_statement_from_pages)
+  This is the hardest part. Financial tables in PDFs look like:
+
+    Particulars              FY2025      FY2024
+    Revenue from operations  12,345.67   10,234.56
+    Cost of materials          8,234.12    6,987.45
+    ...
+
+  You cannot just read the text left-to-right because numbers and labels mix.
+  The solution: use word-level x-coordinates.
+
+  detect_columns() scans the page header area (top 250px) for year tokens
+  (FY2025, FY25, 2024-25, Mar-25, etc.) and records their x-center position.
+  This gives us:
+    fy25_x = 470.3   (the x-center of the FY2025 column)
+    fy24_x = 548.7   (the x-center of the FY2024 column)
+    label_max = 340  (everything left of this x is a label, not a number)
+
+  group_words_by_row() groups words into rows by their vertical position (top),
+  using a tolerance of 4 pixels for words on the same line.
+
+  For each row:
+    - Words with x < label_max → join them as the "Particulars" label
+    - words_near_x(row, fy25_x, tolerance=50) → the FY2025 value string
+    - words_near_x(row, fy24_x, tolerance=50) → the FY2024 value string
+    - clean_value() converts "1,23,456.78" or "(12,345)" to float
+
+  clean_value() handles:
+    - Commas in Indian number format: "1,23,45,678" → 12345678.0
+    - Parentheses for negative: "(1,234)" → -1234.0
+    - Note references like "2.1" or "3(a)" → None (these are footnote refs)
+    - Dashes and blanks → None
+
+STEP 4 — CASH FLOW SPECIAL PARSER (extract_cashflow_from_pages)
+  Cash flow statements have a different layout — sub-items in one column zone
+  and section totals in another (indented structure). The parser uses midpoint
+  between the two year-columns as a hard separator to prevent the current-year
+  zone from bleeding into the prior-year column.
+
+STEP 5 — NARRATIVE EXTRACTION (extract_narrative + extract_key_statements)
+  Reads the MD&A pages as plain text, then scans sentences for 7 themes:
+  revenue_growth, profitability, debt, capex, order_book, guidance, risks.
+  Returns the top 3 sentences per theme.
+
+STEP 6 — FINANCIAL RATIO ENGINE (compute_ratios)
+  Takes the three statement DataFrames and computes 25+ ratios by keyword-
+  searching the "Particulars" column. Returns a dict of {ratio_name: value}.
+
+  get_val(df, keywords, year) is the core helper — it searches the Particulars
+  column for any row containing any of the keywords (case-insensitive) and
+  returns the value in the requested year column.
+
+  This keyword-search approach is necessary because Indian companies use wildly
+  different labels for the same line item:
+    Revenue: "Revenue from operations" / "Net Revenue" / "Income from operations"
+    PAT: "Profit for the year" / "Profit after tax" / "Net income"
+
+STEP 7 — INTERPRETATION (interpret_ratios)
+  Generates human-readable analysis sentences for each ratio, sector-adjusted.
+  Detects the sector from Yahoo Finance's "sector" field and applies different
+  benchmarks. Example: a D/E of 2.5x is "dangerous" for an IT company but
+  "normal" for an infrastructure company.
+
+  Sectors recognized:
+    IT/Technology, Banking/Financial, FMCG/Consumer, Pharma/Healthcare,
+    Infrastructure/Real Estate/Energy, Manufacturing/Industrial
+
+STEP 8 — BENCHMARKING (benchmark_ratios)
+  Assigns each ratio a verdict: strong / good / watch / concern
+  These become the color-coded findings in the Health Check tab.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 5 — fetcher.py: THE LIVE DATA BRIDGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+fetch_yfinance() is the entry point. It accepts any of these input formats:
+  - "INFY"          → ticker without suffix
+  - "INFY.NS"       → ticker with NSE suffix
+  - "500209.BO"     → BSE code
+  - "Infosys"       → company name
+  - "infosys ltd"   → partial name with legal suffix
+  - "shakti pumps"  → short partial name
+
+SYMBOL RESOLUTION (_resolve_symbol):
+  Three strategies in order:
+  1. If input has a "." → use as-is (INFY.NS, 500209.BO)
+  2. No spaces, no dot → append ".NS" (HDFCBANK → HDFCBANK.NS)
+  3. Has spaces → search Yahoo Finance using multiple cleaned variations
+
+  _build_search_candidates() generates multiple search strings from the input:
+    "shakti pumps india ltd" →
+    ["shakti pumps india ltd", "shakti pumps", "shakti", "SHAKTIPUMPSINDIALTD"]
+  Then _indian_search() tries each one via yf.Search(), preferring NSE (.NS)
+  over BSE (.BO) matches.
+
+DATA RESHAPING (_to_df, _to_df_multi):
+  yfinance returns statements as DataFrames with items as rows and dates as
+  columns. compute_ratios() expects DataFrames with "Particulars" as a column
+  and year labels (FY2025, FY2024) as columns. The field maps (INCOME_MAP,
+  BALANCE_MAP, CASHFLOW_MAP) translate between yfinance's field names and
+  the keyword labels that compute_ratios() searches for.
+
+  Values are divided by CRORE = 10,000,000 to convert from absolute INR to
+  ₹ Crores, matching how Indian annual reports present numbers.
+
+MULTI-YEAR HISTORY (ratios_history):
+  fetch_yfinance() computes ratios for all available years (up to 4), not just
+  the latest. This powers the Trends tab. For each year, compute_ratios() is
+  called separately with that year as curr_year and the previous year as
+  prev_year. Growth metrics (YoY%) are stripped from the oldest year since
+  there's no prior data.
+
+OUTPUT FORMAT:
+  Returns a dict with keys:
+    company, ticker, curr_year, prev_year, bs, pl, cf, ratios_sa, ratios_co,
+    findings, interp, info (Yahoo Finance metadata), ratios_history (multi-year)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 6 — dashboard.py: THE STREAMLIT WEB APP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+THE CACHING SYSTEM
+  Streamlit re-runs the entire script on every user interaction. Without
+  caching, every button click would trigger a fresh Yahoo Finance API call.
+  Yahoo Finance has rate limits and the data is slow to fetch.
+
+  @st.cache_data(ttl=3600)   — caches for 1 hour
+  def cached_fetch(ticker):
+      return fetch_yfinance(ticker)
+
+  @st.cache_data(ttl=1800)   — caches for 30 minutes
+  def cached_price_history(ticker, period, interval):
+      return yf.Ticker(ticker).history(period=period, interval=interval)
+
+  How it works: Streamlit computes a hash of the function arguments. If it has
+  seen that hash before and the cache hasn't expired (ttl), it returns the
+  stored result without calling the function. If not, it calls the function
+  and stores the result.
+
+  The result is: data is fetched once per ticker per session, not on every
+  interaction.
+
+SESSION STATE
+  st.session_state is a dict that persists between Streamlit reruns. Used for:
+    "fin_result"     → stores the full analysis result dict after Analyze click
+    "fin_ticker"     → stores the ticker input
+    "_pat_key"       → a composite key: "INFY_1 Year_7" — if this matches the
+                        current settings, no re-detection is needed
+    "_pat_patterns"  → the detected patterns list from the last run
+    "_pat_df"        → the price DataFrame from the last run
+    "peers"          → list of added peer companies for comparison
+    "_peer_anchor"   → the main ticker, used to reset peers when it changes
+
+  Without session state, every Streamlit rerun would discard all previously
+  computed results and force a re-fetch.
+
+THE 7 TABS
+
+  Tab 0 — Financials
+    Displays Balance Sheet, P&L, Cash Flow as styled DataFrames.
+    show_statement() formats the numbers with color highlights for positive/
+    negative values.
+
+  Tab 1 — Ratios
+    show_ratios() displays all computed ratios as st.metric() boxes in a 4-col
+    grid. _format_ratio() applies the right unit to each metric:
+      Margins → "23.45%"
+      Days → "67.3 days"
+      Ratios → "2.34x"
+      ₹ values → "₹ 1,234.56 Cr"
+
+    The sector_filter() hides ratios that are structurally irrelevant:
+      Banking → hides Current Ratio, D/E, Inventory Days (meaningless for banks)
+      IT → hides Inventory Days (IT has no inventory)
+
+  Tab 2 — Charts
+    waterfall_chart() — a Plotly Waterfall chart showing Revenue → deductions →
+    PAT. The stages are: Revenue → Cost of Revenue → Gross Profit → Operating
+    Costs → EBITDA → D&A → EBIT → Finance Costs → PBT → Tax → PAT.
+    Green bars = totals, Red bars = deductions.
+
+    debt_maturity_chart() — a donut pie chart showing Long-term vs Short-term
+    debt split. Metrics row shows absolute values.
+
+    bar_chart() — grouped bar chart comparing current year vs prior year for
+    P&L and Balance Sheet line items.
+
+  Tab 3 — Trends
+    trend_charts() plots 4-year trend lines for groups of related metrics.
+    Uses go.Scatter with mode="lines+markers+text" so data points show values.
+    Groups: Revenue/PAT/EBITDA, Margins, Leverage, Growth, Cash Quality.
+
+  Tab 4 — Health Check
+    Uses benchmark_ratios() findings, sorted by verdict severity.
+    Shows summary counts (Strong/Good/Watch/Concern) as metrics.
+    Red Flags section shows all "concern" findings.
+    Compound checks: combinations like (high D/E AND falling revenue) that are
+    more dangerous than either metric alone.
+    Organizes findings into categories: Profitability, Liquidity, Leverage,
+    Growth, Cash Quality, Efficiency.
+
+  Tab 5 — Compare
+    Peer comparison. User types a competitor ticker, the app fetches it and
+    adds to a comparison table. Up to 3 peers supported.
+    compare_section() builds a table and bar charts for key metrics.
+
+  Tab 6 — Patterns
+    _render_pattern_tab() — the full pattern analysis UI (covered in Section 7).
+
+SECTOR FILTERING (_sector_filter)
+  Detects the sector from Yahoo Finance's "sector" field and:
+  - Hides ratios that are structurally misleading for that sector
+  - Returns explanatory notes to show in the Ratios tab
+  - Returns categories to suppress in the Health Check tab
+  Banks and NBFCs: Current Ratio, D/E, inventory metrics are hidden
+  IT companies: Inventory Days is hidden (they have no physical inventory)
+  FMCG: A note explains why Current Ratio < 1 is healthy (negative working cap)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 7 — pattern_analyzer.py: THE TECHNICAL ANALYSIS ENGINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHAT IS TECHNICAL ANALYSIS?
+  Technical analysis is the study of price patterns in stock charts to forecast
+  future price direction. Unlike fundamental analysis (which looks at balance
+  sheets), technical analysis only uses the price and volume history.
+
+  The idea: human psychology creates recurring patterns in price charts. Fear
+  and greed make traders buy and sell at the same levels repeatedly. When you
+  know what pattern you're looking at, you can predict where the price is likely
+  to go next (the "measured move") and where to exit if you're wrong (the stop
+  loss).
+
+THE PatternResult DATACLASS
+  Every detected pattern is returned as a PatternResult object:
+
+    name:            "Head & Shoulders", "Double Bottom", etc.
+    signal:          "Bullish", "Bearish", or "Neutral"
+    confidence:      0–100 float (computed from multiple quality checks)
+    status:          "Forming" (pattern not yet confirmed) or
+                     "Breakout" (bullish confirmation) or
+                     "Breakdown" (bearish confirmation)
+    description:     Plain-English explanation of what was found
+    target_price:    The measured-move price target (float or None)
+    stop_loss:       The invalidation level (float or None)
+    breakout_level:  The key price that confirms the pattern (float or None)
+    lines:           List of plotly shape dicts for trendlines/necklines
+    annotations:     List of plotly annotation dicts for labels
+    traces:          List of dicts {"x": [dates], "y": [prices]} for the
+                     pattern shape scatter line connecting pivot points
+
+PIVOT POINT DETECTION (find_pivots)
+  Every pattern detector starts by finding pivot highs and lows — the local
+  peaks and troughs in the price data. This is done with a rolling window.
+
+  Algorithm:
+    For each bar i from order to n-order:
+      if high[i] == max(high[i-order : i+order+1]):
+          it's a pivot high (local maximum)
+      if low[i] == min(low[i-order : i+order+1]):
+          it's a pivot low (local minimum)
+
+  "order" is the window size parameter (default 5). Higher order = more
+  significant pivots only, fewer noise spikes detected.
+
+  This is done WITHOUT scipy or any statistical library — pure numpy rolling
+  window. The choice was deliberate to avoid dependency issues on Streamlit Cloud.
+
+  Returns two numpy integer arrays: ph (pivot high indices) and pl (pivot low
+  indices) — these are position indices into the DataFrame.
+
+TIMEFRAME-AWARE DETECTION
+  Not all patterns work at all timeframes. A Bull Flag forms over days to weeks
+  — looking for it on a 5-year weekly chart makes no sense. Cup & Handle takes
+  6–18 months to form — you won't see it on a 1-month chart.
+
+  PATTERN_TIMEFRAMES is a dict mapping each pattern name to the set of
+  timeframes where it's technically valid:
+    Bull/Bear Flags, Pennants: 1M, 3M, 6M only (short-term)
+    Triangles, Wedges: 1M to 1Y
+    Double Top/Bottom: 3M to 2Y
+    Head & Shoulders: 6M to 5Y
+    Cup & Handle, Rounding: 6M to 5Y (need months to form)
+
+  After running all detectors, results are filtered to keep only those valid
+  for the currently selected timeframe.
+
+  TIMEFRAME_MAP defines the yfinance period and interval for each timeframe:
+    1 Month:  period="1mo",  interval="1d"  (daily candles)
+    3 Months: period="3mo",  interval="1d"
+    6 Months: period="6mo",  interval="1d"
+    1 Year:   period="1y",   interval="1d"
+    2 Years:  period="2y",   interval="1wk" (weekly candles)
+    5 Years:  period="5y",   interval="1wk"
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 8 — ALL 22 PATTERNS EXPLAINED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FAMILY 1 — HEAD & SHOULDERS (detect_head_shoulders)
+  Two patterns from this detector:
+
+  1. HEAD & SHOULDERS (Bearish Reversal)
+     Three pivot highs: Left Shoulder → Head → Right Shoulder
+     The head is higher than both shoulders (within 8% of each other in height).
+     Between each shoulder and the head is a "neckline touch" — a pivot low.
+     The neckline connects these two lows.
+     Pattern shape trace: LS high → LT neckline → HD high → RT neckline → RS high
+     Target = neckline − (head − neckline)  [measured move down]
+     Stop   = 2% above the head
+     Confirmed when price closes below the neckline.
+     Confidence boosters: shoulders within 3% of each other (+15),
+     neckline touches within 3% (+10), price already below neckline (+15)
+
+  2. INVERSE HEAD & SHOULDERS (Bullish Reversal)
+     Three pivot LOWS: Left Shoulder → Head → Right Shoulder
+     The head is lower than both shoulders.
+     Mirror image of H&S — signals trend reversal from down to up.
+     Target = neckline + (neckline − head)  [measured move up]
+
+FAMILY 2 — DOUBLE TOP / BOTTOM (detect_double_top_bottom)
+
+  3. DOUBLE TOP (Bearish Reversal)
+     Two pivot highs at approximately the same price (within 3%).
+     A valley between them (pivot low = neckline).
+     Pattern shape trace: P1 high → valley low → P2 high (M-shape)
+     Target = neck − (avg_top − neck)
+     Signals: resistance held twice → likely to break down.
+
+  4. DOUBLE BOTTOM (Bullish Reversal)
+     Two pivot lows at approximately the same price (within 3%).
+     A peak between them (pivot high = neckline).
+     Pattern shape trace: P1 low → peak high → P2 low (W-shape)
+     Target = neck + (neck − avg_bottom)
+     Signals: support held twice → likely to break up.
+
+FAMILY 3 — TRIPLE TOP / BOTTOM (detect_triple_top_bottom)
+
+  5. TRIPLE TOP (Bearish Reversal — very reliable)
+     Three pivot highs all within 3% of each other.
+     Two valleys between them.
+     Pattern trace: P1 → valley1 → P2 → valley2 → P3 (WW-shape)
+     Three failed breakout attempts = very strong resistance.
+     Base confidence 75 (higher than double top's 65).
+
+  6. TRIPLE BOTTOM (Bullish Reversal — very reliable)
+     Three pivot lows all within 3% of each other.
+     Two peaks between them.
+     Three successful support tests = very strong support.
+
+FAMILY 4 — TRIANGLES (detect_triangles)
+  Uses np.polyfit on the last 5 pivot highs and 5 pivot lows to fit trendlines.
+  The slope of each trendline determines which triangle type it is.
+  Traces: connects the actual pivot high points, and separately the pivot lows.
+
+  7. ASCENDING TRIANGLE (Bullish)
+     Flat resistance (slope ≈ 0) + Rising support (positive slope)
+     Price is making higher lows while hitting the same resistance repeatedly.
+     It's coiling up — eventually breaks upward.
+     Target = resistance + (resistance − support average)
+
+  8. DESCENDING TRIANGLE (Bearish)
+     Flat support (slope ≈ 0) + Falling resistance (negative slope)
+     Price makes lower highs while hitting the same support.
+     Coiling down — eventually breaks downward.
+     Target = support − (resistance average − support)
+
+  9. SYMMETRICAL TRIANGLE (Neutral — direction follows prior trend)
+     Both trendlines converging: highs falling + lows rising.
+     Price compressing toward the apex — high-probability breakout coming.
+     Direction unknown until the break happens.
+
+FAMILY 5 — WEDGES (detect_wedges)
+  Similar to triangles but both trendlines slope in the SAME direction.
+  Uses last 4 pivots, fits trendlines with np.polyfit.
+  Traces: actual pivot highs connected, actual pivot lows connected.
+
+  10. RISING WEDGE (Bearish)
+      Both support and resistance slope upward, but support rises faster
+      (lower slope < upper slope), so they converge. Counter-intuitive: rising
+      price but weakening — buyers need increasing effort to push it up.
+      When support breaks → sharp drop.
+
+  11. FALLING WEDGE (Bullish)
+      Both lines slope downward, but resistance falls faster.
+      Despite falling price, sellers are losing energy.
+      When resistance breaks → sharp rally.
+
+FAMILY 6 — FLAGS AND PENNANTS (detect_flags, detect_pennants)
+  Continuation patterns: a strong move (the flagpole) followed by a brief
+  consolidation (the flag/pennant), then continuation in the same direction.
+  Timeframe: short-term only (1M, 3M, 6M).
+
+  The detector splits the last window (up to 60 bars) into:
+    pole_seg = first third (the sharp move)
+    flag_seg = remaining two thirds (the consolidation)
+
+  12. BULL FLAG (Bullish Continuation)
+      Pole: rally of 8%+ in the pole segment
+      Flag: slight downward or sideways drift (slope ≤ 0)
+      Flag range < 60% of the pole range (tight consolidation)
+      Target = current price + pole height
+      Traces: pole start→end, then flag zone start→end
+
+  13. BEAR FLAG (Bearish Continuation)
+      Pole: decline of 8%+ in the pole segment
+      Flag: slight upward or sideways drift (slope ≥ 0)
+      Target = current price − pole height
+
+  14. BULL PENNANT (Bullish Continuation)
+      Same setup as Bull Flag but the consolidation is a converging triangle
+      (pennant) instead of a rectangle. Upper line slopes down, lower slopes up.
+      converging = mh < 0 and ml > 0
+      Traces: pole, then upper trendline of pennant, then lower trendline
+
+  15. BEAR PENNANT (Bearish Continuation)
+      Sharp decline + converging triangle consolidation.
+
+FAMILY 7 — RECTANGLE (detect_rectangle)
+  16. RECTANGLE / TRADING RANGE (Neutral until breakout direction known)
+      Price oscillates between flat support and flat resistance.
+      Uses last 4 pivot highs for resistance level, last 4 lows for support.
+      Requires oscillation range > 3% of price.
+      Checks that recent pivots stay within 4% of the average levels.
+      When price breaks above resistance → Bullish with target = resistance + height
+      When price breaks below support → Bearish with target = support − height
+      Traces: actual pivot highs connected, actual pivot lows connected.
+
+FAMILY 8 — BROADENING FORMATION (detect_broadening)
+  17. BROADENING FORMATION / MEGAPHONE (Bearish)
+      Highs are making higher highs (upper trendline slopes UP)
+      Lows are making lower lows (lower trendline slopes DOWN)
+      Expanding price swings = increasing volatility + indecision.
+      Typically appears at market tops — distribution phase.
+      Traces: pivot highs connected, pivot lows connected.
+
+FAMILY 9 — THREE DRIVES (detect_three_drives)
+  Based on measured-move symmetry — three pushes of approximately equal size.
+
+  18. THREE DRIVES UP (Bearish Reversal)
+      Three ascending pivot highs: v1 < v2 < v3
+      Each drive (v2−v1, v3−v2) within 30% of each other in size.
+      Equal measured moves → buyer exhaustion near v3.
+      Corrections (pullbacks) between each drive are required.
+      Traces: v1 → correction1 → v2 → correction2 → v3 (zigzag)
+      Target = first correction low (retracement to where the move started)
+
+  19. THREE DRIVES DOWN (Bullish Reversal)
+      Three descending pivot lows: v1 > v2 > v3
+      Equal measured moves down → seller exhaustion near v3.
+      Traces: v1 → peak1 → v2 → peak2 → v3
+
+FAMILY 10 — ROUNDING PATTERNS (detect_rounding)
+  Long-term patterns requiring months of data. Uses quadratic curve fitting.
+  np.polyfit(xs, seg, 2) fits a parabola (ax² + bx + c) to the price data:
+    a > 0 → U-shape (rounding bottom)
+    a < 0 → ∩-shape (rounding top)
+  fit_quality = 1 − (std_of_residuals / mean_price): requires 90%+ fit quality.
+  Traces: 12 evenly-sampled actual price points from the segment.
+
+  20. ROUNDING BOTTOM / SAUCER (Bullish Reversal)
+      Gradual U-shaped base over months.
+      Slow accumulation — smart money buying quietly without moving the price.
+      Signals a major trend reversal, not a quick trade.
+      Depth 5–50% from rim required.
+
+  21. ROUNDING TOP (Bearish Reversal)
+      Gradual inverted-U top.
+      Slow distribution — institutional selling spread over months.
+
+FAMILY 11 — CUP & HANDLE (detect_cup_handle)
+  22. CUP & HANDLE (Bullish Continuation)
+      The most famous long-term pattern. Popularized by William O'Neil.
+      Three-part structure on the last 90 bars:
+        left_s  = first third: forms the left rim
+        mid_s   = middle third: forms the cup bottom (U-shape)
+        right_s = last third: forms the right rim + handle
+      Requirements:
+        Both rims within 10% of each other in height
+        Cup depth 10–50% from rim (not too shallow, not too deep)
+        Handle pullback 2–15% of the right rim (tight consolidation)
+      Target = rim + (rim − cup_low)  [pole length added above breakout]
+      Traces: 10 evenly-sampled points from the full cup segment.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 9 — HOW CONFIDENCE SCORES WORK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Every pattern starts with a base confidence (60–75%) and accumulates bonus
+points for quality checks. Confidence is capped at 88–95% — nothing is ever
+100% certain in markets.
+
+Example — Head & Shoulders:
+  Base:    60%
+  +15 if shoulders are within 3% of each other (symmetry)
+  +10 if neckline touches are within 3% (neckline quality)
+  +15 if price has already broken below the neckline (confirmation)
+  Cap:     95%
+
+Example — Ascending Triangle:
+  Base:    65%
+  +10 if 4+ pivot highs used (more data = more reliable trendline)
+  +20 if price already broke above resistance (confirmed breakout)
+  Cap:     92%
+
+The confidence score drives:
+  - Sort order (highest confidence shown first)
+  - Chart rendering priority (higher rank = thicker, brighter lines)
+  - The "Strongest Pattern" banner in the dashboard
+  - The bias meter calculation (weighted sum of bull/bear confidences)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 10 — THE CHART BUILDER (build_pattern_chart)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+build_pattern_chart() produces the interactive Plotly chart. This is the most
+complex function in the project. Here is what gets drawn, in order:
+
+LAYER 1 — CANDLESTICKS
+  go.Candlestick with green candles for up-days and red for down-days.
+  Whisker width 0.5 for a clean look.
+
+LAYER 2 — CLOSE PRICE LINE
+  go.Scatter of the daily/weekly Close prices in thin white (35% opacity).
+  Lets you see the trend direction even when candlestick bars are noisy.
+
+LAYER 3 — EMA LINES (Exponential Moving Averages)
+  EMA is a weighted moving average that gives more weight to recent prices.
+  Computed using pandas: close.ewm(span=N, adjust=False).mean()
+  "adjust=False" means it uses the recursive formula: EMA_today = α × Price + (1−α) × EMA_yesterday
+  where α = 2 / (span + 1)
+
+  EMA 20  (orange) = short-term momentum (20 days/weeks)
+  EMA 50  (blue)   = medium-term trend (50 days/weeks, institutional benchmark)
+  EMA 200 (pink)   = long-term trend (200 days = roughly 1 trading year)
+
+  Only drawn if enough data exists (n >= span).
+
+LAYER 4 — VOLUME BARS
+  Color-coded: green if close >= open, red if close < open.
+  Shown in the bottom subplot at 22% of the chart height.
+  Opacity 0.45 to keep it subtle.
+
+LAYER 5 — PROJECTION ZONE
+  fig.add_vrect() adds a very faint cyan-shaded rectangle from the last bar
+  to a future date (n_future bars ahead, where n_future = min(50, n//6)).
+  fig.add_vline() adds a dotted vertical line at x_last ("Now →").
+  A subtle "Now →" label is placed to the left of the divider.
+
+LAYER 6 — ENTRY ZONE (best pattern only)
+  fig.add_hrect() adds a thin horizontal shaded band around the breakout level
+  of the highest-confidence pattern. Green for bullish, red for bearish.
+  Width is max(0.4%, 0.3% of price range) to ensure it's visible.
+
+LAYER 7 — PATTERN SHAPE TRACES (top 2 patterns only)
+  For rank 0 (gold) and rank 1 (blue):
+  Each pattern's pat.traces list is drawn as go.Scatter with mode="lines+markers".
+  - Lines: solid, rank color
+  - Markers: circles at each pivot point (size 5 for rank 0, size 3 for rank 1)
+  This draws the actual pattern shape on the chart — the M/W/zigzag connecting
+  the key structural pivot points of the pattern.
+  Only top 2 patterns to keep the chart clean.
+
+LAYER 8 — HISTORICAL TRENDLINES (top 4 patterns)
+  Each pattern's pat.lines list contains shape dicts (from _hline, _tline).
+  These are recolored to the pattern's rank color and drawn as solid lines.
+  For rank 0 and 1: also adds a dashed cyan projection of each line forward
+  into the future zone (_project_from function).
+
+  _project_from(shape, x_future) computes where to extend the line:
+    Horizontal lines (y0 == y1): stay flat at the same price
+    Diagonal lines: extrapolate the slope
+      y_future = y1 + (y1−y0) / days_hist × days_proj
+
+LAYER 9 — PREDICTION SCATTER (rank 0 only)
+  A dashed cyan go.Scatter from [x_last, x_future] to [curr_price, target_price].
+  This is the "prediction line" — a straight line from where the price is now
+  to where the pattern's measured-move target is in the future zone.
+
+LAYER 10 — TARGET AND STOP LOSS LINES
+  For the top 4 patterns:
+  Dotted lime green horizontal line at target_price in the future zone.
+  Dash-dot coral red horizontal line at stop_loss in the future zone.
+
+  Deduplication (_is_new_level): if two patterns have target prices within 2%
+  of each other, only one line is drawn. Threshold was 0.3% before (too tight,
+  caused near-duplicate lines) — now 2%.
+
+ANNOTATION SPREADING ALGORITHM
+  This is the key fix for the "numbers overlapping" problem.
+
+  All right-edge text labels (CMP, target 🎯, stop 🛑) go into a list:
+    right_anns = [[y_position, text, color, font_size], ...]
+
+  They are sorted by y_position descending (highest price first).
+
+  Then a spreading pass:
+    min_gap = price_range × 0.018   (1.8% of the chart's full price range)
+    for i in range(1, len(spread)):
+        gap = spread[i-1][0] − spread[i][0]
+        if gap < min_gap:
+            spread[i][0] = spread[i-1][0] − min_gap
+
+  After spreading, all annotations are drawn at their adjusted y positions.
+  Each annotation has bgcolor="rgba(15,15,25,0.65)" — a dark background box
+  so the text is readable against any chart elements behind it.
+
+  This guarantees that no two labels can ever overlap, regardless of how many
+  patterns are detected or how close the price levels are to each other.
+
+PATTERN NAME ANNOTATION
+  The best pattern gets an arrowed annotation pointing at its breakout level.
+  Uses showarrow=True with arrowhead=2, ax=-60, ay=0 to draw an arrow pointing
+  rightward from 60px to the left. Has dark background box for readability.
+
+LEGEND
+  Dummy go.Scatter entries (x=[None], y=[None]) create legend entries for each
+  pattern without adding visible data to the chart. Shows:
+    ▲ Pattern Name (confidence%) — for bullish
+    ▼ Pattern Name (confidence%) — for bearish
+    ◆ Pattern Name (confidence%) — for neutral
+    ── Prediction
+    🎯 Target / 🛑 Stop
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 11 — THE PATTERN TAB UI (_render_pattern_tab)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+User controls:
+  Timeframe selector (1M / 3M / 6M / 1Y / 2Y / 5Y)
+  Sensitivity slider (pivot order 2–15)
+  Detect button
+
+A cache key is built: "{ticker}_{timeframe}_{sensitivity}"
+If this matches the previous run's key, the stored results are reused.
+If not, fresh data is fetched and patterns are re-detected.
+
+OVERALL BIAS METER
+  bull_score = sum of confidence for all bullish patterns
+  bear_score = sum of confidence for all bearish patterns
+  bias = bull_pct vs bear_pct (if either leads by 15+ → clear directional bias)
+  Shows as a green/red/yellow banner with counts and percentages.
+
+BEST PATTERN BANNER
+  One-line summary of the highest-confidence pattern: name, signal, confidence,
+  status, Risk:Reward ratio.
+
+CHART
+  The full Plotly chart from build_pattern_chart().
+
+CHART READING GUIDE
+  A collapsible expander with a table explaining every chart element.
+
+TRADING PLAN BOX
+  For the best pattern: Entry, Target, Stop Loss, R:R in st.metric() boxes.
+  Plus the _GUIDANCE dict entries: Entry trigger, What to watch, Mistake to avoid.
+
+ALL PATTERN CARDS (_render_pattern_card)
+  One expander per detected pattern (best pattern expanded by default).
+  Inside each card:
+    Pattern Type, Reliability (⭐ rating), Signal, Risk:Reward — 4 metric columns
+    Confidence bar (st.progress)
+    Plain-English description of what was detected
+    Key price levels: Entry, Target, Stop in 3 metric columns
+    Actionable guidance: Entry trigger, What to watch, What to avoid
+
+RISK:REWARD CALCULATION (_rr)
+  For Bullish: reward = target − entry, risk = entry − stop
+  For Bearish: reward = entry − target, risk = stop − entry
+  Returns reward/risk rounded to 2 decimal places.
+  A 1:2 R:R means you risk ₹1 to make ₹2 — the typical institutional minimum.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 12 — THE COLOR SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Signal colors (used in pattern logic):
+  _BULL_COLOR = "#26A65B"   (green)    — bullish candles, breakout zones
+  _BEAR_COLOR = "#E74C3C"   (red)      — bearish candles, breakdown zones
+  _NEUT_COLOR = "#F39C12"   (amber)    — neutral signals (symmetrical triangle)
+
+Projection colors (used for future zone only):
+  _PROJ_COLOR   = "#00E5FF"  (bright cyan)    — prediction/projection lines
+  _TARGET_COLOR = "#69FF47"  (lime green)     — target price dotted line
+  _STOP_COLOR   = "#FF6B6B"  (coral red)      — stop loss dash-dot line
+
+Pattern rank colors (each detected pattern gets its rank's color):
+  Rank 0 (best):  #FFD700  (gold)
+  Rank 1:         #3498DB  (blue)
+  Rank 2:         #9B59B6  (purple)
+  Rank 3:         #1ABC9C  (teal)
+  Rank 4:         #E67E22  (orange)
+  Rank 5:         #E91E63  (pink)
+
+Why two separate color systems (signal vs rank)?
+  The signal colors tell you WHAT the pattern predicts (green = bullish).
+  The rank colors tell you WHICH pattern it is (gold = most confident).
+  Using signal colors for the chart lines causes confusion — you'd see all
+  bullish patterns in green, all bearish in red, making it impossible to
+  distinguish which line belongs to which pattern. Rank colors solve this.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 13 — HELPER FUNCTIONS IN PATTERN_ANALYZER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_f(x) — safe float conversion
+  Converts numpy scalars, None, NaN to Python float or None.
+  Critical because Streamlit's serializer cannot handle numpy scalar types
+  (np.float64 etc.) — they must be pure Python float.
+
+_pct(a, b) — percentage difference
+  abs(a − b) / avg(|a|, |b|) × 100
+  Used to check if two prices are "close enough" (e.g. shoulders within 8%).
+
+_iso(ts) — timestamp to ISO string
+  pd.Timestamp(ts).strftime("%Y-%m-%d")
+  Plotly's x-axis with date data needs ISO-format strings, not Timestamp objects.
+
+_hline(x0, x1, y, color, dash, width, opacity) — horizontal line shape dict
+  Returns a plotly shape dict for a flat horizontal line (necklines, support,
+  resistance, target lines).
+
+_tline(x0, y0, x1, y1, color, dash, opacity) — diagonal line shape dict
+  Returns a plotly shape dict for a sloped line (trendlines).
+
+_ann(x, y, text, color, size) — annotation dict
+  Returns a plotly annotation dict with no arrow (floating label).
+
+_future_date(df, n_bars) — compute a future date
+  Takes the average bar-to-bar interval from the DataFrame and projects n_bars
+  ahead of the last date. Works for both daily and weekly data.
+
+flatten_ohlcv(df) — normalize yfinance multi-level columns
+  yfinance sometimes returns DataFrames with a two-level column index when
+  fetching data for a single ticker (the ticker name is the upper level).
+  This function strips the upper level and keeps only Open/High/Low/Close/Volume.
+
+detect_all_patterns(df, order, timeframe) — master detector
+  1. Runs all detector functions
+  2. Filters by PATTERN_TIMEFRAMES[name]
+  3. Deduplicates: keeps only the highest-confidence result per pattern name
+  4. Sorts descending by confidence
+  Returns the final clean list.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 14 — DEPLOYMENT: STREAMLIT CLOUD AND GITHUB
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+HOW STREAMLIT CLOUD WORKS
+  Streamlit Cloud is a free hosting platform. You connect your GitHub repo and
+  it automatically deploys your Streamlit app. Every time you push to GitHub,
+  it redeploys. The entry point is dashboard.py.
+
+  Streamlit Cloud runs dashboard.py on a Linux server. It needs to know what
+  packages to install. That's what requirements.txt is for:
+    streamlit>=1.35.0
+    yfinance>=0.2.54
+    pandas>=2.0.0
+    numpy>=1.26.0
+    plotly>=5.20.0
+    pdfplumber>=0.11.0
+
+  Without requirements.txt, Streamlit Cloud would fail with:
+    ModuleNotFoundError: No module named 'plotly'
+
+  The pdfplumber dependency is kept in requirements.txt even though it's only
+  used by main.py (PDF mode), not the web app, because removing it would break
+  the import of main.py which fetcher.py imports.
+
+RUNNING LOCALLY
+  python -m streamlit run dashboard.py
+  (Note: NOT "m streamlit run" — that's PowerShell confusing the "m" alias)
+
+GIT WORKFLOW
+  The project uses git for version control and GitHub as remote.
+  Typical workflow:
+    git add pattern_analyzer.py dashboard.py
+    git commit -m "description"
+    git push origin master
+
+  If the remote is ahead (someone else pushed or you pushed from another
+  machine): git pull --rebase origin master && git push
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 15 — KNOWN LIMITATIONS AND DESIGN CHOICES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. YAHOO FINANCE RATE LIMITS
+   Yahoo Finance has undocumented rate limits. Fetching too many companies in
+   quick succession causes 429 (Too Many Requests) errors. The @st.cache_data
+   decorator with ttl=3600 prevents re-fetching within the same session hour.
+
+2. YAHOO FINANCE DATA GAPS
+   For smaller companies, yfinance may return empty DataFrames for some
+   statements. The dashboard handles this gracefully — empty statements show
+   "no data" messages rather than crashing.
+
+3. CONSOLIDATED VS STANDALONE
+   Indian companies file both standalone (parent company only) and consolidated
+   (parent + subsidiaries) statements. Yahoo Finance only provides consolidated.
+   The code exposes both "ratios_sa" and "ratios_co" keys but they point to the
+   same data from Yahoo Finance. For proper standalone-vs-consolidated comparison,
+   you'd need the PDF analyzer (main.py).
+
+4. PATTERN DETECTION IS PROBABILISTIC
+   Pattern detection is never certain. The confidence scores reflect the quality
+   of the pattern structure, not the probability of the price actually moving
+   to the target. Always use stop losses.
+
+5. NO SCIPY DEPENDENCY
+   scipy has a signal.argrelextrema function that finds local extrema. This
+   project deliberately avoids scipy and implements its own rolling-window pivot
+   finder. Reason: scipy adds ~50MB to the deployment size and was causing
+   dependency conflicts on Streamlit Cloud's older Python environment.
+
+6. WEEKLY DATA FOR 2Y AND 5Y
+   For longer timeframes, daily data creates too many bars (500–1000+) which
+   makes pattern detection noisy and the chart slow. Weekly candles (interval="1wk")
+   reduce 5 years to ~260 bars, which is much more manageable.
+
+7. ANNOTATION POSITIONS ARE Y-AXIS RELATIVE
+   All chart annotations use yref="y" (data coordinates) not yref="paper"
+   (0–1 normalized). This means they move when you zoom the chart — which is
+   the correct behavior for price labels.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 16 — DATA FLOW: END TO END
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+USER TYPES "Infosys" AND CLICKS ANALYZE:
+
+  dashboard.py
+    cached_fetch("Infosys")
+      → fetcher.py: _resolve_symbol("Infosys")
+          → " " in input → _build_search_candidates("Infosys")
+              → ["Infosys", "Infosys"] (after dedup)
+          → _indian_search("Infosys") → yf.Search("Infosys")
+              → returns "INFY.NS"
+      → _fetch_statements("INFY.NS")
+          → yf.Ticker("INFY.NS").financials  → income DataFrame
+          → yf.Ticker("INFY.NS").balance_sheet → bs DataFrame
+          → yf.Ticker("INFY.NS").cashflow → cf DataFrame
+      → _to_df(income, INCOME_MAP, "FY2025", "FY2024")
+          → reshapes to {Particulars | FY2025 | FY2024}
+          → divides by CRORE
+      → compute_ratios(bs, pl, cf) → {ratios dict}
+      → interpret_ratios(ratios, sector="Technology") → [interpretation notes]
+      → benchmark_ratios(ratios, sector="Technology") → [findings list]
+      → returns big result dict
+    → st.session_state["fin_result"] = result
+    → render_results(result)
+        → st.tabs([...7 tabs...])
+        → Tab 0: show_statement(bs), show_statement(pl), show_statement(cf)
+        → Tab 1: show_ratios(filtered_ratios)
+        → Tab 2: waterfall_chart, debt_maturity_chart, bar_chart × 2
+        → Tab 3: trend_charts
+        → Tab 4: Health Check with benchmark findings
+        → Tab 5: Compare (peer input)
+        → Tab 6: _render_pattern_tab("INFY.NS", "Infosys Limited")
+
+USER SELECTS "1 Year" AND CLICKS DETECT IN PATTERNS TAB:
+
+  _render_pattern_tab
+    cached_price_history("INFY.NS", "1y", "1d")
+      → yf.Ticker("INFY.NS").history(period="1y", interval="1d")
+      → returns OHLCV DataFrame with ~250 rows
+    → detect_all_patterns(price_df, order=7, timeframe="1 Year")
+        → flatten_ohlcv(df)
+        → find_pivots(high, low, order=7)
+            → rolling window → ph (array of peak indices)
+                              → pl (array of trough indices)
+        → detect_head_shoulders(df, ph, pl) → []
+        → detect_double_top_bottom(df, ph, pl) → [PatternResult(...)]
+        → detect_triangles(df, ph, pl) → [PatternResult(...)]
+        → detect_wedges(df, ph, pl) → []
+        → detect_three_drives(df, ph, pl) → []
+        → detect_rectangle(df, ph, pl) → None
+        → detect_broadening(df, ph, pl) → None
+        → detect_flags(df) → []
+        → detect_pennants(df) → []
+        → detect_rounding(df) → [PatternResult(...)]
+        → detect_cup_handle(df) → PatternResult(...)
+        → filter by timeframe
+        → deduplicate by name
+        → sort by confidence desc
+        → returns [best_pattern, second_pattern, ...]
+    → build_pattern_chart(price_df, patterns, "INFY.NS", "1 Year")
+        → make_subplots(2 rows)
+        → add candlestick
+        → add close line
+        → add EMA 20, 50, 200
+        → add volume bars
+        → add projection zone
+        → draw pattern shapes (top 2 patterns)
+        → draw trendlines (top 4 patterns)
+        → draw prediction line (rank 0 only)
+        → collect all right-edge annotations
+        → spread annotations (min_gap = price_range × 1.8%)
+        → add pattern name arrow annotation
+        → update layout (dark theme, 720px height, etc.)
+        → return fig
+    → st.plotly_chart(fig)
+    → render bias meter
+    → render trading plan
+    → render all pattern cards
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 17 — FINANCIAL RATIOS: WHAT EACH ONE MEANS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PROFITABILITY
+  Gross Profit Margin %  = Gross Profit / Revenue × 100
+                           What % of revenue is left after direct costs.
+  EBITDA Margin %        = EBITDA / Revenue × 100
+                           Operating profitability before interest, tax, depreciation.
+  Net Profit Margin %    = PAT / Revenue × 100
+                           What % of every rupee of revenue the company keeps.
+  Return on Equity %     = PAT / Total Equity × 100
+                           How much profit per rupee of shareholder money invested.
+  Return on Assets %     = PAT / Total Assets × 100
+                           How efficiently assets generate profits.
+
+LIQUIDITY
+  Current Ratio          = Current Assets / Current Liabilities
+                           Can the company pay short-term bills? >1.5 is healthy.
+  Quick Ratio            = (Current Assets − Inventory) / Current Liabilities
+                           Same but excludes inventory (harder to liquidate fast).
+  Cash Ratio             = Cash / Current Liabilities
+                           The strictest liquidity test — cash only.
+
+LEVERAGE
+  Debt-to-Equity         = Total Debt / Total Equity
+                           How much debt per rupee of equity. <1 is conservative.
+  Debt-to-Assets         = Total Debt / Total Assets
+                           What fraction of assets is funded by debt.
+  Interest Coverage      = EBITDA / Interest Expense
+                           How many times earnings cover interest payments.
+                           <1.5 is danger zone — can't comfortably service debt.
+
+EFFICIENCY
+  Asset Turnover         = Revenue / Total Assets
+                           How efficiently assets generate revenue.
+  Receivables Days       = (Trade Receivables / Revenue) × 365
+                           Days to collect money after making a sale.
+  Inventory Days         = (Inventory / Revenue) × 365
+                           Days of inventory held. Lower is more efficient.
+  Payables Days          = (Trade Payables / Revenue) × 365
+                           Days before paying suppliers. Higher is better.
+  Cash Conversion Cycle  = Receivable Days + Inventory Days − Payables Days
+                           Total days to convert operations to cash.
+                           Negative = suppliers are funding operations (great for FMCG).
+
+GROWTH
+  Revenue Growth YoY %   = (Revenue_curr − Revenue_prev) / |Revenue_prev| × 100
+  PAT Growth YoY %       = (PAT_curr − PAT_prev) / |PAT_prev| × 100
+
+CASH QUALITY
+  CFO / PAT              = Operating Cash Flow / Profit After Tax
+                           Are profits translating to actual cash? >1 = excellent.
+                           <0.5 = paper profits, not real cash — red flag.
+  FCF (Free Cash Flow)   = Operating Cash Flow + Investing Cash Flow
+                           Cash left after investing. The "true" earnings.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 18 — EVOLUTION: HOW THE PROJECT GREW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Phase 1 — PDF Analyzer (main.py)
+  Built as a standalone terminal script. You drop a PDF annual report in the
+  folder, set PDF_PATH, run it, get a printed ratio report.
+  Key innovation: coordinate-based table parsing (no OCR needed, just geometry).
+
+Phase 2 — Live Dashboard (dashboard.py + fetcher.py)
+  Replaced the PDF requirement with live Yahoo Finance data.
+  Added Streamlit UI with 7 tabs.
+  Added caching, session state, sector filtering, peer comparison.
+  Deployed to Streamlit Cloud. Fixed rate-limiting with @st.cache_data.
+
+Phase 3 — Pattern Analysis (pattern_analyzer.py)
+  Added 22 pattern detectors with timeframe-aware detection.
+  Added PatternResult dataclass, confidence scoring, trading plan generation.
+  Added the full Plotly chart with trendlines, projections, targets, stops.
+  Built the _GUIDANCE dict with entry/watch/avoid for all 22 patterns.
+  Added shape traces (pat.traces) to draw the actual pattern shape on the chart.
+  Added closing price line + prediction scatter.
+  Fixed annotation overlap with the spreading algorithm.
+  Pushed to GitHub, redeployed on Streamlit Cloud.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 19 — COMPLETE CODE FLOW OF THE ENTIRE PROJECT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This section traces every function call, data transformation, and file
+interaction from the moment the user types a stock name, through all four
+Python files, to the final rendered chart and analysis cards.
+
+There are two separate execution paths:
+  PATH A — Web Dashboard (the live app, most users)
+  PATH B — PDF Parser (terminal script, developer/research use)
+
+Both paths share the same ratio engine in main.py but diverge at the data
+source (Yahoo Finance vs local PDF).
+
+
+────────────────────────────────────────────────────────────────────────────────
+PATH A — WEB DASHBOARD  (dashboard.py → fetcher.py → main.py → pattern_analyzer.py)
+────────────────────────────────────────────────────────────────────────────────
+
+STEP 1: Browser renders the Streamlit app
+  dashboard.py runs top-to-bottom on every page load/interaction.
+  The script first sets up the page config, then renders the header and the
+  search input widget.
+
+  Code entry point:
+    st.set_page_config(page_title="Indian Stock Analyzer", layout="wide")
+    ticker_input = st.text_input("Enter Ticker / Company Name")
+    if st.button("Analyse"):
+        → triggers the main analysis block
+
+
+STEP 2: Cache check (dashboard.py)
+  @st.cache_data(ttl=3600)
+  def _cached_fetch(ticker: str) -> dict:
+      return fetch_yfinance(ticker)
+
+  Before doing any network call, Streamlit checks if this ticker was already
+  fetched within the last hour (3600 seconds). If yes, the cached dict is
+  returned instantly — no Yahoo Finance call, no waiting.
+  If no cache hit → proceeds to Step 3.
+
+
+STEP 3: Symbol resolution (fetcher.py — _resolve_symbol)
+  fetch_yfinance(ticker_input) is called.
+  _resolve_symbol(ticker_input) runs first.
+
+  Three branches:
+    a) Input has a dot ("INFY.NS", "500209.BO")
+       → Return as-is, already fully qualified.
+
+    b) Input has no spaces ("INFY", "HDFCBANK", "SHAKTIPUMP")
+       → Append ".NS" → "INFY.NS"
+       → yfinance will be tried with this symbol directly.
+       → If data comes back empty: fall back to Yahoo search (Step 3c).
+
+    c) Input has spaces ("Infosys", "hdfc bank", "Shakti Pumps India Ltd")
+       → _build_search_candidates(raw) generates multiple search strings:
+            ["Shakti Pumps India Ltd",   ← original
+             "Shakti Pumps",             ← noise words stripped
+             "Shakti",                   ← first word only
+             "SHAKTIPUMPSINDIALTD"]      ← joined uppercase ticker guess
+       → For each candidate: _indian_search(candidate)
+            → yf.Search(candidate, max_results=20).quotes
+            → Iterates results; prefers ".NS" over ".BO"
+            → Returns first match, e.g. "SHAKTIPUMP.NS"
+       → If nothing found: last resort = words joined + ".NS"
+
+
+STEP 4: Raw data fetch (fetcher.py — _fetch_statements)
+  _fetch_statements(symbol) is called with the resolved symbol.
+  Creates a yfinance Ticker object: t = yf.Ticker("SHAKTIPUMP.NS")
+  Fetches three statements in sequence:
+    income  = t.financials     ← annual P&L (rows = line items, cols = dates)
+    bs_raw  = t.balance_sheet  ← annual balance sheet
+    cf_raw  = t.cashflow       ← annual cash flow statement
+
+  Each is a pandas DataFrame. Columns are pandas Timestamps (the fiscal year
+  end dates). Rows are indexed by the line item name (e.g. "Total Revenue",
+  "Net Income", "Total Assets"). Values are in absolute INR (not crores).
+
+  Example raw income DataFrame shape:
+    Columns: [2025-03-31, 2024-03-31, 2023-03-31, 2022-03-31]
+    Index:   ["Total Revenue", "Gross Profit", "Net Income", ...]
+    Values:  2500000000.0  (= ₹250 Crore, before /CRORE conversion)
+
+
+STEP 5: Column label derivation (fetcher.py)
+  dates     = sorted(ref.columns, reverse=True)   ← [2025-03-31, 2024-03-31, ...]
+  curr_col  = _fy_label(dates[0])                 ← "FY2025"
+  prev_col  = _fy_label(dates[1])                 ← "FY2024"
+
+  _fy_label just does: f"FY{pd.Timestamp(date).year}"
+
+
+STEP 6: Reshape to Particulars DataFrames (fetcher.py — _to_df)
+  Three calls:
+    pl = _to_df(income,  INCOME_MAP,   "FY2025", "FY2024")
+    bs = _to_df(bs_raw,  BALANCE_MAP,  "FY2025", "FY2024")
+    cf = _to_df(cf_raw,  CASHFLOW_MAP, "FY2025", "FY2024")
+
+  _to_df iterates INCOME_MAP (list of (yfinance_key, readable_label) pairs).
+  For each pair:
+    → If yfinance_key is in raw.index → extract that row
+    → Read curr_val = row[dates[0]], prev_val = row[dates[1]]
+    → Divide both by CRORE (10,000,000) → now in ₹ Crores
+    → Append {"Particulars": label, "FY2025": curr_val, "FY2024": prev_val}
+
+  Output: a clean 3-column DataFrame:
+    Particulars                    FY2025    FY2024
+    Revenue from operations        2500.00   2100.00
+    Gross profit                    850.00    710.00
+    EBITDA                          620.00    510.00
+    ...
+
+  This exact format is what compute_ratios() was originally written to read
+  from PDF-parsed tables. The field labels in INCOME_MAP / BALANCE_MAP /
+  CASHFLOW_MAP are chosen so that compute_ratios()'s keyword searches match.
+
+
+STEP 7: Multi-year DataFrames for trend history (fetcher.py — _to_df_multi)
+  Same reshaping logic, but retains all 4 years:
+    all_fy_labels = ["FY2025", "FY2024", "FY2023", "FY2022"]
+    pl_full = _to_df_multi(income, INCOME_MAP, all_fy_labels)
+    bs_full = _to_df_multi(bs_raw, BALANCE_MAP, all_fy_labels)
+    cf_full = _to_df_multi(cf_raw, CASHFLOW_MAP, all_fy_labels)
+
+  Output is a 5-column DataFrame:
+    Particulars                FY2025   FY2024   FY2023   FY2022
+    Revenue from operations    2500     2100     1800     1550
+    ...
+
+  Used later to compute ratios_history (one ratio dict per year).
+
+
+STEP 8: Ratio computation (main.py — compute_ratios)
+  ratios = compute_ratios(bs, pl, cf, curr_year="FY2025", prev_year="FY2024")
+
+  compute_ratios() takes the three Particulars DataFrames and extracts values
+  by keyword search through the "Particulars" column. For example:
+
+    def _find(df, *keywords):
+        for kw in keywords:
+            mask = df["Particulars"].str.contains(kw, case=False, na=False)
+            if mask.any():
+                return df.loc[mask, curr_year].iloc[0]
+        return None
+
+    revenue = _find(pl, "revenue", "turnover", "sales")
+    pat     = _find(pl, "profit for the year", "net income", "net profit")
+    equity  = _find(bs, "total equity", "shareholders equity")
+    debt    = _find(bs, "total borrowings", "total debt")
+    ...
+
+  Then all ratios are computed from these extracted values:
+    Gross Margin %       = gross_profit / revenue * 100
+    EBITDA Margin %      = ebitda / revenue * 100
+    Net Profit Margin %  = pat / revenue * 100
+    ROE %                = pat / equity * 100
+    ROCE %               = ebit / (equity + debt) * 100
+    Debt-to-Equity       = debt / equity
+    Current Ratio        = current_assets / current_liabilities
+    ... (25+ ratios total)
+
+  Returns a plain Python dict: {"Revenue": 2500.0, "PAT": 180.0, "ROE %": 14.2, ...}
+
+
+STEP 9: Ratio interpretation (main.py — interpret_ratios, benchmark_ratios)
+  interp   = interpret_ratios(ratios, sector=sector)
+  findings = benchmark_ratios(ratios, sector=sector)
+
+  interpret_ratios() looks at each ratio value and returns a sentence:
+    ROE 14.2% → "Return on equity is 14.2% — adequate but room to improve"
+    D/E 0.8   → "Debt-to-equity is 0.8 — moderate leverage"
+  Returns a dict of {ratio_name: interpretation_string}
+
+  benchmark_ratios() compares each ratio against sector benchmarks:
+    If sector == "Technology": ROE threshold = 15%, D/E threshold = 0.3
+    If sector == "Banking":    NIM threshold = 3.5%, GNPA threshold = 3%
+  Returns a list of finding strings, e.g.:
+    ["✅ ROE above sector average", "⚠️ Debt-to-equity above sector median"]
+
+
+STEP 10: ratios_history computation (fetcher.py)
+  Loop over each year in all_fy_labels:
+    for i, fy in enumerate(["FY2025", "FY2024", "FY2023", "FY2022"]):
+        prev = all_fy_labels[i+1] if i+1 < len(all_fy_labels) else fy
+        r = compute_ratios(bs_full, pl_full, cf_full, curr_year=fy, prev_year=prev)
+        ratios_history[fy] = r
+
+  This gives a dict of dicts:
+    {"FY2025": {ROE: 14.2, ...}, "FY2024": {ROE: 12.1, ...}, ...}
+
+  Used in the Trends tab to draw sparkline charts of ratio evolution over time.
+
+
+STEP 11: Return dict assembled (fetcher.py — fetch_yfinance returns)
+  The function returns one big dict with everything:
+    {
+      "company":        "Shakti Pumps (India) Ltd",
+      "ticker":         "SHAKTIPUMP.NS",
+      "curr_year":      "FY2025",
+      "prev_year":      "FY2024",
+      "bs":             <DataFrame — Balance Sheet, 2 years>,
+      "pl":             <DataFrame — P&L, 2 years>,
+      "cf":             <DataFrame — Cash Flow, 2 years>,
+      "bs_c":           <same as bs — yfinance only gives consolidated>,
+      "pl_c":           <same as pl>,
+      "cf_c":           <same as cf>,
+      "ratios_sa":      {ROE: 14.2, D/E: 0.8, ...},
+      "ratios_co":      {ROE: 14.2, ...},        ← same, no standalone available
+      "ratios_history": {"FY2025": {...}, "FY2024": {...}, ...},
+      "findings":       ["✅ ROE above sector", "⚠️ D/E elevated"],
+      "interp":         {"ROE %": "Return on equity...", ...},
+      "info":           {longName, sector, fullTimeEmployees, ...},
+      "warnings":       ["Values in ₹ Crores | Source: Yahoo Finance"],
+      "mda_text":       "",          ← empty for yfinance (no PDF = no MDA)
+      "key_statements": {},
+      "total_pages":    None,
+      "page_map":       {},
+    }
+
+
+STEP 12: Dashboard renders the financial tabs (dashboard.py)
+  The returned dict is stored in st.session_state["data"].
+  The 7 tabs are rendered using st.tabs([...]).
+
+  Tab 1 — Financials:
+    st.dataframe(data["pl"])   ← shows the P&L table
+    st.dataframe(data["bs"])   ← shows the Balance Sheet table
+    st.dataframe(data["cf"])   ← shows the Cash Flow table
+
+  Tab 2 — Ratios:
+    Iterates data["ratios_sa"].items()
+    For each ratio: st.metric(label, value, delta_vs_prev_year)
+    Expandable section shows data["interp"] text for each ratio.
+
+  Tab 3 — Charts:
+    Renders bar/line charts of revenue, PAT, EBITDA using plotly.express.
+    Data comes from data["pl"] sliced by the Particulars column.
+
+  Tab 4 — Trends:
+    Iterates data["ratios_history"].
+    For each ratio: plots its value across FY2022–FY2025 as a sparkline.
+    Uses st.plotly_chart() with a small go.Figure.
+
+  Tab 5 — Health Check:
+    Iterates data["findings"] and shows each as st.success / st.warning / st.error
+    depending on whether the string starts with ✅, ⚠️, or ❌.
+
+  Tab 6 — Compare:
+    User selects peer tickers in a multiselect.
+    For each peer: calls _cached_fetch(peer_ticker) → same flow (Steps 2–11).
+    Builds a comparison DataFrame of key ratios side by side.
+    Renders as st.dataframe with conditional color highlighting.
+
+  Tab 7 — Patterns:
+    → Triggers the pattern analysis sub-flow (see PATH A — PART II below).
+
+
+────────────────────────────────────────────────────────────────────────────────
+PATH A PART II — PATTERN ANALYSIS SUB-FLOW
+(dashboard.py → pattern_analyzer.py)
+────────────────────────────────────────────────────────────────────────────────
+
+STEP 13: OHLCV data fetch (dashboard.py)
+  When the user opens the Patterns tab:
+    @st.cache_data(ttl=1800)
+    def _fetch_ohlcv(ticker, period, interval):
+        raw = yf.download(ticker, period=period, interval=interval)
+        return flatten_ohlcv(raw)
+
+  yf.download returns a multi-level column DataFrame:
+    ("Open", "SHAKTIPUMP.NS"), ("High", "SHAKTIPUMP.NS"), ...
+
+  flatten_ohlcv() (defined in pattern_analyzer.py) drops the second level:
+    df.columns = df.columns.get_level_values(0)
+  Result: a standard OHLCV DataFrame with columns Open, High, Low, Close, Volume.
+
+
+STEP 14: Pattern detection call (dashboard.py → pattern_analyzer.py)
+  patterns = detect_patterns(df, timeframe=selected_timeframe)
+
+  detect_patterns() in pattern_analyzer.py is the master dispatcher:
+    results = []
+    results += detect_head_shoulders(df)
+    results += detect_double_top_bottom(df)
+    results += detect_triple_top_bottom(df)
+    results += detect_triangles(df)
+    results += detect_wedges(df)
+    results += detect_flags(df)
+    results += detect_cup_handle(df)
+    results += detect_pennants(df)
+    results += detect_rectangle(df)
+    results += detect_three_drives(df)
+    results += detect_rounding(df)
+    results += detect_broadening(df)
+
+  Each detector function:
+    → Takes the full OHLCV DataFrame
+    → Runs find_pivots(df) first to get pivot high/low indices
+    → Checks geometric conditions (symmetry, convergence, etc.)
+    → If conditions pass: creates and returns a PatternResult object
+    → If conditions don't pass: returns []
+
+
+STEP 15: find_pivots (pattern_analyzer.py)
+  ph, pl = find_pivots(df, left=5, right=5)
+
+  Iterates every bar from index left to index n-right.
+  For each bar i:
+    Is high[i] > all highs in [i-left : i+right+1] except itself? → pivot high
+    Is low[i]  < all lows  in [i-left : i+right+1] except itself? → pivot low
+  Returns two arrays of integer indices: ph (pivot highs), pl (pivot lows).
+
+  Why rolling windows? No scipy, no FFT — works on any DataFrame size,
+  handles irregular trading calendars, has no external dependencies.
+
+
+STEP 16: Geometric condition checking (inside each detector, e.g. detect_triangles)
+  Example: Symmetric Triangle detection:
+
+    if len(ph) < 2 or len(pl) < 2:
+        return []
+
+    # Last two pivot highs must be descending
+    ph_u = ph[-2:]
+    if h[ph_u[1]] >= h[ph_u[0]]:
+        return []
+
+    # Last two pivot lows must be ascending
+    pl_u = pl[-2:]
+    if l[pl_u[1]] <= l[pl_u[0]]:
+        return []
+
+    # Fit trendlines through highs and lows using least-squares
+    slope_h, int_h = np.polyfit([ph_u[0], ph_u[1]], [h[ph_u[0]], h[ph_u[1]]], 1)
+    slope_l, int_l = np.polyfit([pl_u[0], pl_u[1]], [l[pl_u[0]], l[pl_u[1]]], 1)
+
+    # Lines must converge (high slope negative, low slope positive)
+    if slope_h >= 0 or slope_l <= 0:
+        return []
+
+    # Convergence point must be in the near future
+    x_conv = (int_l - int_h) / (slope_h - slope_l)
+    bars_to_conv = x_conv - (n - 1)
+    if bars_to_conv < 2 or bars_to_conv > 30:
+        return []
+
+  np.polyfit(x_points, y_points, 1) is linear regression: returns [slope, intercept]
+  so the trendline is: y = slope * x + intercept for any x.
+
+
+STEP 17: PatternResult construction (inside each detector)
+  If all conditions pass, the detector builds a PatternResult:
+
+    PatternResult(
+        name        = "Symmetrical Triangle",
+        signal      = "Bullish",
+        confidence  = 0.72,
+        status      = "Forming",
+        description = "Price coiling with lower highs and higher lows...",
+        target_price = float(h[ph_u[-1]] + triangle_height),
+        stop_loss    = float(l[pl_u[-1]] * 0.98),
+        breakout_level = float(slope_h * (n-1) + int_h),
+        lines = [                            ← trendlines for add_shape
+            {"x0": ..., "y0": ..., "x1": ..., "y1": ...},
+            ...
+        ],
+        annotations = [                      ← text labels for add_annotation
+            {"x": ..., "y": ..., "text": "Resistance"},
+            ...
+        ],
+        traces = [                           ← pivot-to-pivot shape lines
+            {"x": [date_str, date_str], "y": [price, price]},
+            ...
+        ],
+    )
+
+
+STEP 18: Confidence scoring (pattern_analyzer.py — inside each detector)
+  Each detector computes a confidence score between 0.0 and 1.0.
+  The score is built by checking optional quality criteria and adding weights:
+
+  Example for H&S:
+    conf = 0.55                              ← base score
+    if volume confirms (right shoulder lower volume): conf += 0.10
+    if neckline is nearly horizontal (slope < threshold): conf += 0.10
+    if shoulder symmetry within 15%: conf += 0.10
+    if pattern formed in >= 20 bars: conf += 0.05
+    if pattern formed in <= 60 bars: conf += 0.05
+    conf = min(conf, 0.95)                   ← cap at 95%
+
+  Confidence is shown as a progress bar in the dashboard's pattern card.
+  It also affects the sorting order — higher confidence patterns rank first.
+
+
+STEP 19: Timeframe filtering (pattern_analyzer.py — detect_patterns)
+  After all detectors run:
+    PATTERN_TIMEFRAMES = {
+        "Head & Shoulders": ["1Y", "2Y", "5Y"],
+        "Flag":             ["1M", "3M", "6M"],
+        "Cup & Handle":     ["6M", "1Y", "2Y"],
+        ...
+    }
+    results = [p for p in results
+               if timeframe in PATTERN_TIMEFRAMES.get(p.name, ALL_TIMEFRAMES)]
+
+  Short timeframes (1M, 3M) → only short-duration patterns (flags, pennants).
+  Long timeframes (1Y, 2Y, 5Y) → only macro patterns (H&S, cup, rounding bottom).
+
+
+STEP 20: Pattern sorting (dashboard.py)
+  patterns.sort(key=lambda p: p.confidence, reverse=True)
+  best = patterns[0] if patterns else None
+
+  The top 6 patterns go to the chart builder.
+  All detected patterns go to the pattern cards in the sidebar.
+
+
+STEP 21: Chart building (pattern_analyzer.py — build_pattern_chart)
+  fig = build_pattern_chart(df, patterns[:6], timeframe)
+
+  Internal flow of build_pattern_chart:
+
+    a) Create subplot figure with 2 rows (price on row 1, volume on row 2):
+         fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                             row_heights=[0.75, 0.25])
+
+    b) Add candlestick trace (row 1):
+         fig.add_trace(go.Candlestick(...), row=1, col=1)
+
+    c) Add close price line (row 1):
+         fig.add_trace(go.Scatter(x=df.index, y=df["Close"],
+                       line=dict(color="rgba(255,255,255,0.35)")), row=1, col=1)
+
+    d) Add EMA lines (row 1):
+         for span in [20, 50, 200]:
+             ema = df["Close"].ewm(span=span, adjust=False).mean()
+             fig.add_trace(go.Scatter(x=df.index, y=ema, name=f"EMA{span}"), row=1, col=1)
+
+    e) Add volume bars (row 2):
+         colors = ["#26a69a" if c >= o else "#ef5350" for c, o in zip(close, open_)]
+         fig.add_trace(go.Bar(x=df.index, y=df["Volume"], marker_color=colors), row=2, col=1)
+
+    f) Determine future zone:
+         x_last   = df.index[-1]            ← last real candle date
+         offset   = pd.tseries.frequencies.to_offset(...)  ← 1D, 1W, etc.
+         x_future = x_last + offset * future_bars  ← projection endpoint
+
+    g) Add vertical "Now" divider:
+         fig.add_vline(x=x_last, line_dash="dot", line_color="rgba(255,255,255,0.25)")
+         fig.add_annotation(x=x_last, text="Now →", ...)
+
+    h) Loop over patterns (ranked 0–5):
+         For each pattern:
+           - Rank → color from PAT_COLORS list, opacity from OPACITIES list
+           - If rank 0 or 1: add pattern shape scatter (pat.traces)
+           - Add trendlines via add_shape for each line in pat.lines
+           - Add _project_from() extensions into the future zone
+           - Add text annotations for pattern-specific labels (pat.annotations)
+
+    i) Pattern shape scatter (rank 0 and 1 only):
+         for tr in pat.traces:
+             fig.add_trace(go.Scatter(
+                 x=tr["x"], y=tr["y"],
+                 mode="lines+markers",
+                 line=dict(color=h_color, dash="solid"),
+                 marker=dict(size=5, symbol="circle"),
+             ), row=1, col=1)
+
+    j) Prediction scatter (rank 0 only):
+         fig.add_trace(go.Scatter(
+             x=[x_last, x_future],
+             y=[curr_close, best.target_price],
+             mode="lines",
+             line=dict(color=_PROJ_COLOR, dash="dash"),
+         ), row=1, col=1)
+
+    k) Right-edge labels (spaced annotation algorithm):
+         Collect all price labels: CMP, 🎯 target, 🛑 stop loss.
+         Sort by y-value descending.
+         min_gap = (y_max - y_min) * 0.018
+         For each label from top to bottom:
+             if gap < min_gap: push it down
+         Add each as fig.add_annotation(x=x_future, y=y_pos, ...)
+
+    l) Arrowed pattern name annotation:
+         fig.add_annotation(x=x_last, y=breakout_level,
+                            text=f"↑ {best.name}",
+                            showarrow=True, arrowhead=2, ax=-60)
+
+    m) Apply layout:
+         fig.update_layout(
+             height=720, template="plotly_dark",
+             xaxis_rangeslider_visible=False,
+             margin=dict(l=10, r=185, t=55, b=10),
+             ...
+         )
+
+    n) Return fig → dashboard passes it to st.plotly_chart(fig)
+
+
+STEP 22: Pattern cards rendered (dashboard.py — _render_pattern_tab)
+  For each detected pattern (sorted by confidence descending):
+    with st.expander(f"{pat.name} — {pat.signal} ({pat.confidence:.0%})"):
+        st.progress(pat.confidence)
+        st.write(pat.description)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Target", f"₹{pat.target_price:,.0f}")
+        col2.metric("Stop Loss", f"₹{pat.stop_loss:,.0f}")
+        col3.metric("Breakout", f"₹{pat.breakout_level:,.0f}")
+        st.info(_GUIDANCE[pat.name]["entry"])
+
+
+────────────────────────────────────────────────────────────────────────────────
+PATH B — PDF PARSER  (terminal: python main.py)
+────────────────────────────────────────────────────────────────────────────────
+
+STEP B1: Script entry point (main.py — __main__ block)
+  User sets PDF_PATH = "annual_report_2024.pdf" in the script and runs it.
+  main() is called.
+
+
+STEP B2: PDF loading (main.py — using pdfplumber)
+  with pdfplumber.open(PDF_PATH) as pdf:
+      pages = pdf.pages       ← list of Page objects
+      total = len(pages)
+
+
+STEP B3: Statement page detection (main.py — find_statement_pages)
+  Iterates every page, extracts text, searches for keywords:
+    "balance sheet", "profit and loss", "cash flow statement"
+  Builds a page_map: {"bs": [4, 5], "pl": [6], "cf": [7, 8]}
+  This auto-detection means no manual page numbers are needed.
+
+
+STEP B4: Table extraction (main.py — extract_table_from_page)
+  For each detected statement page:
+    page.extract_words(x_tolerance=3, y_tolerance=3)
+    Returns a list of word dicts: {text, x0, x1, top, bottom}
+
+  Words are grouped into rows by y-coordinate proximity.
+  Within each row, the first "word" is the Particulars label, remaining
+  words are numeric values for each year column.
+
+  Raw result is a list of rows like:
+    [["Revenue from operations", "250000", "210000"],
+     ["Other income", "5000", "4500"],
+     ...]
+
+
+STEP B5: Number cleaning (main.py — _parse_number)
+  Commas removed, brackets become negatives: "(50000)" → -50000.
+  Strings like "–", "—", "-" become None.
+  Result: a proper float or None.
+
+
+STEP B6: DataFrame assembly (main.py)
+  Rows converted to a DataFrame with columns:
+    Particulars | <curr_year> | <prev_year>
+  This is the exact same format as fetcher.py produces — that's intentional,
+  so compute_ratios() can work with both sources.
+
+
+STEP B7: Ratio computation (main.py — compute_ratios)
+  Same function called with the same interface:
+    ratios = compute_ratios(bs, pl, cf, curr_year=curr_col, prev_year=prev_col)
+  Identical to Step 8 in Path A.
+
+
+STEP B8: Output printed to terminal (main.py)
+  print(f"=== {company_name} — Financial Analysis ===")
+  print(f"Revenue:           ₹{ratios['Revenue']:,.2f} Cr")
+  print(f"PAT:               ₹{ratios['PAT']:,.2f} Cr")
+  print(f"ROE:               {ratios['ROE %']:.1f}%")
+  ...
+  for finding in findings:
+      print(finding)
+
+
+────────────────────────────────────────────────────────────────────────────────
+CROSS-FILE DEPENDENCY MAP
+────────────────────────────────────────────────────────────────────────────────
+
+  dashboard.py
+    ├── imports fetcher.py          → fetch_yfinance()
+    ├── imports pattern_analyzer.py → detect_patterns(), build_pattern_chart(),
+    │                                  flatten_ohlcv(), PatternResult
+    └── does NOT import main.py directly (main.py is used via fetcher.py)
+
+  fetcher.py
+    ├── imports main.py             → compute_ratios(), interpret_ratios(),
+    │                                  benchmark_ratios()
+    └── imports yfinance, pandas, numpy
+
+  pattern_analyzer.py
+    ├── imports pandas, numpy, plotly
+    └── does NOT import any local file (fully self-contained)
+
+  main.py
+    ├── imports pdfplumber, pandas, numpy, re
+    └── does NOT import any local file (the root module)
+
+  Dependency direction:
+    dashboard.py → fetcher.py → main.py
+    dashboard.py → pattern_analyzer.py
+    main.py (standalone for PDF path)
+
+  The core ratio engine (compute_ratios in main.py) is the shared foundation.
+  Both Path A and Path B ultimately call it with identically shaped DataFrames.
+
+
+────────────────────────────────────────────────────────────────────────────────
+DATA STRUCTURE FLOW DIAGRAM (text version)
+────────────────────────────────────────────────────────────────────────────────
+
+User types "Shakti Pumps"
+       │
+       ▼
+dashboard.py: _cached_fetch("Shakti Pumps")
+       │
+       ▼
+fetcher.py: _resolve_symbol() → "SHAKTIPUMP.NS"
+       │
+       ▼
+fetcher.py: yf.Ticker("SHAKTIPUMP.NS")
+       │          ├── .financials  → raw income DataFrame  (rows=items, cols=dates)
+       │          ├── .balance_sheet → raw bs DataFrame
+       │          └── .cashflow   → raw cf DataFrame
+       │
+       ▼
+fetcher.py: _to_df() × 3  [divide by CRORE, map to Particulars labels]
+       │          ├── pl  → Particulars|FY2025|FY2024 DataFrame
+       │          ├── bs  → Particulars|FY2025|FY2024 DataFrame
+       │          └── cf  → Particulars|FY2025|FY2024 DataFrame
+       │
+       ▼
+main.py: compute_ratios(bs, pl, cf)
+       │          → extracts values by keyword search through Particulars column
+       │          → computes 25+ ratio values
+       │          → returns dict: {ROE: 14.2, D/E: 0.8, ...}
+       │
+       ▼
+main.py: interpret_ratios() + benchmark_ratios()
+       │          → returns text interpretations + sector comparison findings
+       │
+       ▼
+fetcher.py: assembles final result dict
+       │          → keys: company, ticker, bs, pl, cf, ratios_sa, ratios_history,
+       │                   findings, interp, info, warnings
+       │
+       ▼
+dashboard.py: stores in st.session_state["data"]
+       │
+       ├──── Tabs 1–6: render tables, metrics, charts, health check, compare
+       │
+       └──── Tab 7 (Patterns):
+                   │
+                   ▼
+              yf.download(ticker, period, interval) → OHLCV DataFrame
+                   │
+                   ▼
+              flatten_ohlcv() → clean single-level OHLCV DataFrame
+                   │
+                   ▼
+              detect_patterns(df, timeframe)
+                   │     ├── find_pivots(df) → ph[], pl[] indices
+                   │     ├── detect_head_shoulders()    → PatternResult or []
+                   │     ├── detect_triangles()         → PatternResult or []
+                   │     ├── detect_flags()             → PatternResult or []
+                   │     └── ... (12 detectors total)
+                   │
+                   ▼
+              patterns sorted by confidence descending
+                   │
+                   ├── build_pattern_chart(df, patterns[:6])
+                   │     ├── go.Candlestick (price candles)
+                   │     ├── go.Scatter (close line)
+                   │     ├── go.Scatter × 3 (EMA 20/50/200)
+                   │     ├── go.Bar (volume)
+                   │     ├── go.Scatter × N (pattern shape traces)
+                   │     ├── go.Scatter (prediction dashed line)
+                   │     ├── add_shape × N (trendlines + projections)
+                   │     ├── add_annotation × N (labels + spreading algo)
+                   │     └── returns Plotly Figure
+                   │     st.plotly_chart(fig)
+                   │
+                   └── pattern cards: st.expander × N
+                         (confidence bar, description, metrics, guidance)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+END OF DEEP READ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Total files: 6 (main.py, fetcher.py, pattern_analyzer.py, dashboard.py,
+             requirements.txt, README.md)
+Total patterns: 22 across 11 detector functions and 10 pattern families
+Total ratios computed: 25+
+Timeframes supported: 6 (1M, 3M, 6M, 1Y, 2Y, 5Y)
+Dashboard tabs: 7 (Financials, Ratios, Charts, Trends, Health Check, Compare,
+                Patterns)
+
+================================================================================
