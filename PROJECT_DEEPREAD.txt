@@ -32,17 +32,11 @@ The whole thing is deployed on Streamlit Cloud and the code lives on GitHub.
 SECTION 2 — THE FILES AND WHAT EACH ONE DOES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  main.py           — The original PDF annual report analyzer. Reads a local
-                      PDF file, finds the financial statement pages automatically,
-                      extracts numbers using coordinate-based parsing, computes
-                      ratios, and prints a full report to the terminal. This is
-                      a standalone script, not part of the web app.
-
-  fetcher.py        — The live data bridge between Yahoo Finance and the
-                      dashboard. Wraps yfinance, reshapes its data format into
-                      the same structure that main.py's ratio engine expects, so
-                      the exact same compute_ratios() function works for both
-                      PDF-extracted data and live Yahoo Finance data.
+  fetcher.py        — The live data bridge and ratio engine. Wraps yfinance,
+                      resolves stock symbols, reshapes raw financial data into
+                      clean DataFrames, and contains the full ratio computation
+                      engine (compute_ratios, interpret_ratios, benchmark_ratios).
+                      Fully self-contained — no local imports.
 
   pattern_analyzer.py — The technical analysis engine. Detects 22 chart
                       patterns in stock price data, scores each by confidence,
@@ -1383,7 +1377,7 @@ STEP 7: Multi-year DataFrames for trend history (fetcher.py — _to_df_multi)
   Used later to compute ratios_history (one ratio dict per year).
 
 
-STEP 8: Ratio computation (main.py — compute_ratios)
+STEP 8: Ratio computation (fetcher.py — compute_ratios)
   ratios = compute_ratios(bs, pl, cf, curr_year="FY2025", prev_year="FY2024")
 
   compute_ratios() takes the three Particulars DataFrames and extracts values
@@ -1415,7 +1409,7 @@ STEP 8: Ratio computation (main.py — compute_ratios)
   Returns a plain Python dict: {"Revenue": 2500.0, "PAT": 180.0, "ROE %": 14.2, ...}
 
 
-STEP 9: Ratio interpretation (main.py — interpret_ratios, benchmark_ratios)
+STEP 9: Ratio interpretation (fetcher.py — interpret_ratios, benchmark_ratios)
   interp   = interpret_ratios(ratios, sector=sector)
   findings = benchmark_ratios(ratios, sector=sector)
 
@@ -1764,69 +1758,25 @@ STEP 22: Pattern cards rendered (dashboard.py — _render_pattern_tab)
 
 
 ────────────────────────────────────────────────────────────────────────────────
-PATH B — PDF PARSER  (terminal: python main.py)
+NOTE — PDF PARSER REMOVED
 ────────────────────────────────────────────────────────────────────────────────
 
-STEP B1: Script entry point (main.py — __main__ block)
-  User sets PDF_PATH = "annual_report_2024.pdf" in the script and runs it.
-  main() is called.
+The project originally had a second execution path: a standalone terminal script
+(main.py) that read a local PDF annual report using pdfplumber, parsed the
+financial statement tables using coordinate-based word extraction, and printed a
+ratio report to the terminal.
 
+This path has been removed. main.py was deleted from the project because:
+  - It had zero connection to the web dashboard.
+  - The only parts of main.py the dashboard ever used were 3 functions:
+    compute_ratios(), interpret_ratios(), benchmark_ratios().
+  - Those 3 functions (plus the get_val() helper they depend on) were moved
+    into fetcher.py, making fetcher.py fully self-contained.
+  - The remaining ~1100 lines (pdfplumber parsing, page detection, terminal
+    output, JSON export, Ollama AI analysis) were dead code from the
+    dashboard's perspective.
 
-STEP B2: PDF loading (main.py — using pdfplumber)
-  with pdfplumber.open(PDF_PATH) as pdf:
-      pages = pdf.pages       ← list of Page objects
-      total = len(pages)
-
-
-STEP B3: Statement page detection (main.py — find_statement_pages)
-  Iterates every page, extracts text, searches for keywords:
-    "balance sheet", "profit and loss", "cash flow statement"
-  Builds a page_map: {"bs": [4, 5], "pl": [6], "cf": [7, 8]}
-  This auto-detection means no manual page numbers are needed.
-
-
-STEP B4: Table extraction (main.py — extract_table_from_page)
-  For each detected statement page:
-    page.extract_words(x_tolerance=3, y_tolerance=3)
-    Returns a list of word dicts: {text, x0, x1, top, bottom}
-
-  Words are grouped into rows by y-coordinate proximity.
-  Within each row, the first "word" is the Particulars label, remaining
-  words are numeric values for each year column.
-
-  Raw result is a list of rows like:
-    [["Revenue from operations", "250000", "210000"],
-     ["Other income", "5000", "4500"],
-     ...]
-
-
-STEP B5: Number cleaning (main.py — _parse_number)
-  Commas removed, brackets become negatives: "(50000)" → -50000.
-  Strings like "–", "—", "-" become None.
-  Result: a proper float or None.
-
-
-STEP B6: DataFrame assembly (main.py)
-  Rows converted to a DataFrame with columns:
-    Particulars | <curr_year> | <prev_year>
-  This is the exact same format as fetcher.py produces — that's intentional,
-  so compute_ratios() can work with both sources.
-
-
-STEP B7: Ratio computation (main.py — compute_ratios)
-  Same function called with the same interface:
-    ratios = compute_ratios(bs, pl, cf, curr_year=curr_col, prev_year=prev_col)
-  Identical to Step 8 in Path A.
-
-
-STEP B8: Output printed to terminal (main.py)
-  print(f"=== {company_name} — Financial Analysis ===")
-  print(f"Revenue:           ₹{ratios['Revenue']:,.2f} Cr")
-  print(f"PAT:               ₹{ratios['PAT']:,.2f} Cr")
-  print(f"ROE:               {ratios['ROE %']:.1f}%")
-  ...
-  for finding in findings:
-      print(finding)
+There is now only one execution path: the web dashboard (PATH A above).
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -1835,30 +1785,24 @@ CROSS-FILE DEPENDENCY MAP
 
   dashboard.py
     ├── imports fetcher.py          → fetch_yfinance()
-    ├── imports pattern_analyzer.py → detect_patterns(), build_pattern_chart(),
-    │                                  flatten_ohlcv(), PatternResult
-    └── does NOT import main.py directly (main.py is used via fetcher.py)
+    └── imports pattern_analyzer.py → detect_patterns(), build_pattern_chart(),
+                                       flatten_ohlcv(), PatternResult
 
   fetcher.py
-    ├── imports main.py             → compute_ratios(), interpret_ratios(),
-    │                                  benchmark_ratios()
-    └── imports yfinance, pandas, numpy
+    ├── contains compute_ratios(), interpret_ratios(), benchmark_ratios(), get_val()
+    ├── imports yfinance, pandas, numpy
+    └── does NOT import any local file (fully self-contained)
 
   pattern_analyzer.py
     ├── imports pandas, numpy, plotly
     └── does NOT import any local file (fully self-contained)
 
-  main.py
-    ├── imports pdfplumber, pandas, numpy, re
-    └── does NOT import any local file (the root module)
-
   Dependency direction:
-    dashboard.py → fetcher.py → main.py
+    dashboard.py → fetcher.py
     dashboard.py → pattern_analyzer.py
-    main.py (standalone for PDF path)
 
-  The core ratio engine (compute_ratios in main.py) is the shared foundation.
-  Both Path A and Path B ultimately call it with identically shaped DataFrames.
+  Both fetcher.py and pattern_analyzer.py are leaves — no local imports.
+  dashboard.py is the only file that imports other local modules.
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -1886,13 +1830,13 @@ fetcher.py: _to_df() × 3  [divide by CRORE, map to Particulars labels]
        │          └── cf  → Particulars|FY2025|FY2024 DataFrame
        │
        ▼
-main.py: compute_ratios(bs, pl, cf)
+fetcher.py: compute_ratios(bs, pl, cf)
        │          → extracts values by keyword search through Particulars column
        │          → computes 25+ ratio values
        │          → returns dict: {ROE: 14.2, D/E: 0.8, ...}
        │
        ▼
-main.py: interpret_ratios() + benchmark_ratios()
+fetcher.py: interpret_ratios() + benchmark_ratios()
        │          → returns text interpretations + sector comparison findings
        │
        ▼
@@ -1944,7 +1888,7 @@ dashboard.py: stores in st.session_state["data"]
 END OF DEEP READ
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Total files: 6 (main.py, fetcher.py, pattern_analyzer.py, dashboard.py,
+Total files: 5 (fetcher.py, pattern_analyzer.py, dashboard.py,
              requirements.txt, README.md)
 Total patterns: 22 across 11 detector functions and 10 pattern families
 Total ratios computed: 25+
